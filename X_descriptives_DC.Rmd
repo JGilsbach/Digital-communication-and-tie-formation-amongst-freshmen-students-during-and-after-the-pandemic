@@ -1,0 +1,581 @@
+---
+title: "X_descriptives"
+author: "Judith Gilsbach"
+date: "2023-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(haven)
+library(tidyverse)
+library(tidygraph)
+library(network)
+library(igraph)
+library(RSiena)
+library(knitr)
+library(tableHTML)
+library(stargazer)
+library(gridExtra)
+library(plotrix)
+```
+
+# Load environment from after imputation
+
+## cohort 1 <br/>(2020/21)
+```{r}
+date_initial <- "241111" #date the initial environment was created in format yymmdd
+D <- 50 #number of imputations used in environment to load
+
+load(paste0(date_initial,"_analysis_cohort1_environment_",D,"imp.Rdata"))
+rm(list=setdiff(ls(), c("finalResults_K1","finalResults_rounded_K1","imp_W1_K1","imp_W2_K1","imp_W3_K1")))
+```
+
+## cohort 2 <br/>(2021/22)
+```{r}
+date_initial <- "241111" #date the initial environment was created in format yymmdd
+D <- 50 #number of imputations used in environment to load
+
+load(paste0(date_initial,"_analysis_cohort2_environment_",D,"imp.Rdata"))
+# rm(list=setdiff(ls(), c("finalResults_K1","finalResults_rounded_K1","finalResults_K2","finalResults_rounded_K2",
+#                         "date_initial","D",
+#                         "imp_W1_K1","imp_W2_K1","imp_W3_K1",,"imp_W1_K2","imp_W2_K2","imp_W3_K2")))
+```
+
+## initial environment
+
+```{r}
+date_initial <- "240118" #date the initial environment was created in format yymmdd
+load(paste0(date_initial,"_initial_environment.Rdata"))
+```
+
+# Descriptives
+
+## Define helper functions
+```{r}
+diag_na <- function(matrix){
+  diag(matrix) <- NA
+  return(matrix)
+} #converts diagonal to NA (loops counted as missing data)
+
+diag_zero <- function(matrix){
+  diag(matrix) <- 0
+  return(matrix)
+} #converts diagonal to zero (loops counted as non existent ties)
+
+impute_zero_no_loop <- function(matrix){
+  matrix[is.na(matrix)] <- 0
+  diag(matrix) <- NA
+  return(matrix)
+} #imputes NA with zero (loops counted as missing data)
+```
+
+## Degree of Change <br/>(Jaccard Index)
+
+Stability of the network (only fully observed part) over waves. According to Snijders et al 2010: Snijders, T. A. B., van de Bunt, G. G., and Steglich, C. (2010b). Introduction to actorbased
+models for network dynamics. Social Networks, 32:44-60.
+Values higher than 0.3 are good. Values higher than 0.2 are okay.
+
+### Cohort 1 (2020/21)
+```{r}
+edges_W1_K1 <- as.vector(diag_na(relation_W1_K1_ma)[-c(1,15,20,21,24,33,34,38,39,40), #delete columns and lines for missing nodes
+                                                    -c(1,15,20,21,24,33,34,38,39,40)])
+edges_W2_K1 <- as.vector(diag_na(relation_W2_K1_ma)[-c(1,15,20,21,24,33,34,38,39,40),
+                                                    -c(1,15,20,21,24,33,34,38,39,40)])
+edges_W3_K1 <- as.vector(diag_na(relation_W3_K1_ma)[-c(1,15,20,21,24,33,34,38,39,40), 
+                                                    -c(1,15,20,21,24,33,34,38,39,40)])
+jaccard_df_K1<- data.frame(edges_W1_K1,edges_W2_K1,edges_W3_K1) %>%
+  mutate(N11_W12 = if_else(edges_W1_K1 == 1 & edges_W2_K1 ==1,1,0), #comparing wave 1 and 2
+         N01_W12 = if_else(edges_W1_K1 == 0 & edges_W2_K1 ==1,1,0),
+         N10_W12 = if_else(edges_W1_K1 == 1 & edges_W2_K1 ==0,1,0),
+         N11_W23 = if_else(edges_W2_K1 == 1 & edges_W3_K1 ==1,1,0), #comparing wave 2 and 3
+         N01_W23 = if_else(edges_W2_K1 == 0 & edges_W3_K1 ==1,1,0),
+         N10_W23 = if_else(edges_W2_K1 == 1 & edges_W3_K1 ==0,1,0)) %>%
+  filter(!is.na(N11_W12)) #filter out missings: These are missing because the edges would resemble loops
+
+sum(jaccard_df_K1$N11_W12)
+```
+
+### Cohort 2 (2021/22)
+```{r}
+edges_W1_K2 <- as.vector(diag_na(relation_W1_K2_ma)[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64), #delete columns and lines for missing nodes
+                                                                     -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)])
+edges_W2_K2 <- as.vector(diag_na(relation_W2_K2_ma)[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64),
+                                                                     -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)])
+edges_W3_K2 <- as.vector(diag_na(relation_W3_K2_ma)[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64), 
+                                                                     -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)])
+jaccard_df_K2<- data.frame(edges_W1_K2,edges_W2_K2,edges_W3_K2) %>%
+  mutate(N11_W12 = if_else(edges_W1_K2 == 1 & edges_W2_K2 ==1,1,0), #comparing wave 1 and 2
+         N01_W12 = if_else(edges_W1_K2 == 0 & edges_W2_K2 ==1,1,0),
+         N10_W12 = if_else(edges_W1_K2 == 1 & edges_W2_K2 ==0,1,0),
+         N11_W23 = if_else(edges_W2_K2 == 1 & edges_W3_K2 ==1,1,0), #comparing wave 2 and 3
+         N01_W23 = if_else(edges_W2_K2 == 0 & edges_W3_K2 ==1,1,0),
+         N10_W23 = if_else(edges_W2_K2 == 1 & edges_W3_K2 ==0,1,0)) %>%
+  filter(!is.na(N11_W12)) #filter out missings: These are missing because the edges would resemble loops
+
+sum(jaccard_df_K2$N11_W12)
+```
+
+## Density
+
+### Cohort 1 (2020/21)
+```{r}
+density_df_K1 <- data.frame(Possible_relations = c(NA,NA,NA),
+                            Present_relations = NA,
+                            Density_null_imputation = NA,
+                            Reciprocity_observed = NA,
+                            Transitivity_observed = NA,
+                            Triads_observed_FF = NA,
+                            Students_observed = c(38,39,33),
+                            Students_total = c(42,42,42),
+                            Jaccard_sim_prev = NA #Jaccard similarity with previous wave
+                            )
+
+imputation_df_K1 <- data.frame(Possible_relations = c(NA,NA,NA),
+                            Present_relations = NA,
+                            Absent_relations = NA,
+                            Missing_relations = NA,
+                            Density_null_imputation = NA,
+                            Density_deletion = NA,
+                            Average_density_imputation = NA,
+                            Students_observed = c(38,39,33),
+                            Students_total = c(42,42,42))
+
+# Loops are not considered possible relations and therefore not missing for missing senders.
+#density deletion is calculated under deletion of all actors that have been missing in any wave as our analysis method SAOM can only handle cases which are complete in all waves.
+density_df_K1$Possible_relations <- length(nodelist_K1)*length(nodelist_K1)-length(nodelist_K1)
+imputation_df_K1$Possible_relations <- density_df_K1$Possible_relations
+
+density_df_K1$Present_relations <- c(table(relation_W1_K1_ma, useNA = "always")[2], #wave 1
+                                     table(relation_W2_K1_ma, useNA = "always")[2], #wave 2
+                                     table(relation_W3_K1_ma, useNA = "always")[2]) #wave 3
+imputation_df_K1$Present_relations <- density_df_K1$Present_relations
+
+imputation_df_K1$Absent_relations <- c(table(diag_na(relation_W1_K1_ma), useNA = "always")[1],
+                                    table(diag_na(relation_W2_K1_ma), useNA = "always")[1],
+                                    table(diag_na(relation_W3_K1_ma), useNA = "always")[1])
+
+
+imputation_df_K1$Missing_relations <- c(table(diag_zero(relation_W1_K1_ma), useNA = "always")[3],
+                                    table(diag_zero(relation_W2_K1_ma), useNA = "always")[3],
+                                    table(diag_zero(relation_W3_K1_ma), useNA = "always")[3])
+density_df_K1$Density_null_imputation <- c(c(table(impute_zero_no_loop(relation_W1_K1_ma)))[2]/(42*42-42),
+                                           c(table(impute_zero_no_loop(relation_W2_K1_ma)))[2]/(42*42-42),
+                                           c(table(impute_zero_no_loop(relation_W3_K1_ma)))[2]/(42*42-42))
+imputation_df_K1$Density_null_imputation <- density_df_K1$Density_null_imputation
+
+imputation_df_K1$Density_deletion <- c(table(diag_na(relation_W1_K1_ma)[-c(1,15,20,21,24,33,34,38,39,40),-c(1,15,20,21,24,33,34,38,39,40)])[2]/ #delete columns and lines for missing nodes
+                                      (((42-10)*(42-10))-(42-10)),
+                                    table(diag_na(relation_W2_K1_ma)[-c(1,15,20,21,24,33,34,38,39,40),-c(1,15,20,21,24,33,34,38,39,40)])[2]/
+                                      (((42-10)*(42-10))-(42-10)),
+                                    table(diag_na(relation_W3_K1_ma)[-c(1,15,20,21,24,33,34,38,39,40),-c(1,15,20,21,24,33,34,38,39,40)])[2]/
+                                      (((42-10)*(42-10))-(42-10)))
+density_df_K1$Triads_observed_FF <- c(sum(triad.census(relation_W1_K1_gr)[c(6,8,11,14,15,16)]), #values 6,8,11,14,15,16 are all types of triads of type that include A->B->C; FF, see igraph package documentation
+                                      sum(triad.census(relation_W2_K1_gr)[c(6,8,11,14,15,16)]),
+                                      sum(triad.census(relation_W3_K1_gr)[c(6,8,11,14,15,16)]))
+
+
+#Average density after imputation needs to be added after imputation
+list_K1_W1_imp_density <- list()
+list_K1_W2_imp_density <- list()
+list_K1_W3_imp_density <- list()
+for (i in 1:D) {
+  list_K1_W1_imp_density[i] <- table(diag_na(imp_W1_K1[[i]]))[2]/(42*42-42)
+  list_K1_W2_imp_density[i] <- table(diag_na(imp_W2_K1[[i]]))[2]/(42*42-42)
+  list_K1_W3_imp_density[i] <- table(diag_na(imp_W3_K1[[i]]))[2]/(42*42-42)
+}
+imputation_df_K1$Average_density_imputation <- c(mean(unlist(list_K1_W1_imp_density)),mean(unlist(list_K1_W2_imp_density)),mean(unlist(list_K1_W3_imp_density)))
+
+density_df_K1$Reciprocity_observed <- c(reciprocity(relation_W1_K1_gr),
+                                        reciprocity(relation_W2_K1_gr),
+                                        reciprocity(relation_W3_K1_gr))
+
+density_df_K1$Transitivity_observed <- c(transitivity(relation_W1_K1_gr, type = "global"),
+                                         transitivity(relation_W2_K1_gr, type = "global"),
+                                         transitivity(relation_W3_K1_gr, type = "global"))
+
+density_df_K1$Jaccard_sim_prev <- c(NA,
+                                    sum(jaccard_df_K1$N11_W12)/sum(c(jaccard_df_K1$N01_W12,jaccard_df_K1$N10_W12,jaccard_df_K1$N11_W12)),
+                                    sum(jaccard_df_K1$N11_W23)/sum(c(jaccard_df_K1$N01_W23,jaccard_df_K1$N10_W23,jaccard_df_K1$N11_W23)))
+
+stargazer(density_df_K1, summary = FALSE, title="Descriptive statistics cohort 1",
+           rownames = FALSE, type = "html", out = paste0("Results/descriptive_cohort1.html"))
+
+stargazer(imputation_df_K1, summary = FALSE, title="Descriptive statistics imputation cohort 1",
+           rownames = FALSE, type = "html", out = paste0("Results/descriptive_imputation_cohort1.html"))
+```
+
+### Cohort 2 (2021/22)
+```{r}
+density_df_K2 <- data.frame(Possible_relations = c(NA,NA,NA),
+                            Present_relations = NA,
+                            Density_null_imputation = NA,
+                            Reciprocity_observed = NA,
+                            Transitivity_observed = NA,
+                            Triads_observed_FF = NA,
+                            Students_observed = c(58,54,43),
+                            Students_total = c(66,66,66),
+                            Jaccard_sim_prev = NA #Jaccard similarity with previous wave
+                            )
+
+imputation_df_K2 <- data.frame(Possible_relations = c(NA,NA,NA),
+                            Present_relations = NA,
+                            Absent_relations = NA,
+                            Missing_relations = NA,
+                            Density_null_imputation = NA,
+                            Density_deletion = NA,
+                            Average_density_imputation = NA,
+                            Students_observed = c(58,54,43),
+                            Students_total = c(66,66,66))
+
+# Loops are not considered possible relations and therefore not missing for missing senders.
+#density deletion is calculated under deletion of all actors that have been missing in any wave as our analysis method SAOM can only handle cases which are complete in all waves.
+density_df_K2$Possible_relations <- length(nodelist_K2)*length(nodelist_K2)-length(nodelist_K2)
+imputation_df_K2$Possible_relations <- density_df_K2$Possible_relations
+
+density_df_K2$Present_relations <- c(table(relation_W1_K2_ma, useNA = "always")[2], #wave 1
+                                     table(relation_W2_K2_ma, useNA = "always")[2], #wave 2
+                                     table(relation_W3_K2_ma, useNA = "always")[2]) #wave 3
+imputation_df_K2$Present_relations <- density_df_K2$Present_relations
+
+imputation_df_K2$Absent_relations <- c(table(diag_na(relation_W1_K2_ma), useNA = "always")[1],
+                                    table(diag_na(relation_W2_K2_ma), useNA = "always")[1],
+                                    table(diag_na(relation_W3_K2_ma), useNA = "always")[1])
+imputation_df_K2$Missing_relations <- c(table(diag_zero(relation_W1_K2_ma), useNA = "always")[3],
+                                     table(diag_zero(relation_W2_K2_ma), useNA = "always")[3],
+                                     table(diag_zero(relation_W3_K2_ma), useNA = "always")[3])
+density_df_K2$Density_null_imputation <- c(c(table(impute_zero_no_loop(relation_W1_K2_ma)))[2]/(66*66-66),
+                                           c(table(impute_zero_no_loop(relation_W2_K2_ma)))[2]/(66*66-66),
+                                           c(table(impute_zero_no_loop(relation_W3_K2_ma)))[2]/(66*66-66))
+imputation_df_K2$Density_null_imputation <- density_df_K2$Density_null_imputation
+
+imputation_df_K2$Density_deletion <- c(table(diag_na(relation_W1_K2_ma)[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64), #delete columns and lines for missing nodes
+                                                                     -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)])[2]/
+                                      (((66-27)*(66-27))-(66-27)),
+                                    table(diag_na(relation_W2_K2_ma)[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64),
+                                                                     -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)])[2]/
+                                      (((66-27)*(66-27))-(66-27)),
+                                    table(diag_na(relation_W3_K2_ma)[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64),
+                                                                     -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)])[2]/
+                                      (((66-27)*(66-27))-(66-27)))
+density_df_K2$Triads_observed_FF <- c(sum(triad.census(relation_W1_K2_gr)[c(6,8,11,14,15,16)]), #values 6,8,11,14,15,16 are all types of triads of type that include A->B->C; FF, see igraph package documentation
+                                      sum(triad.census(relation_W2_K2_gr)[c(6,8,11,14,15,16)]),
+                                      sum(triad.census(relation_W3_K2_gr)[c(6,8,11,14,15,16)]))
+
+#Average density after imputation needs to be added after imputation
+list_K2_W1_imp_density <- list()
+list_K2_W2_imp_density <- list()
+list_K2_W3_imp_density <- list()
+for (i in 1:D) {
+  list_K2_W1_imp_density[i] <- table(diag_na(imp_W1_K2[[i]]))[2]/(66*66-66)
+  list_K2_W2_imp_density[i] <- table(diag_na(imp_W2_K2[[i]]))[2]/(66*66-66)
+  list_K2_W3_imp_density[i] <- table(diag_na(imp_W3_K2[[i]]))[2]/(66*66-66)
+}
+imputation_df_K2$Average_density_imputation <- c(mean(unlist(list_K2_W1_imp_density)),mean(unlist(list_K2_W2_imp_density)),mean(unlist(list_K2_W3_imp_density)))
+
+density_df_K2$Reciprocity_observed <- c(reciprocity(relation_W1_K2_gr),
+                                        reciprocity(relation_W2_K2_gr),
+                                        reciprocity(relation_W2_K2_gr))
+
+density_df_K2$Transitivity_observed <- c(transitivity(relation_W1_K2_gr, type = "global"),
+                                         transitivity(relation_W2_K2_gr, type = "global"),
+                                         transitivity(relation_W3_K2_gr, type = "global"))
+
+density_df_K2$Jaccard_sim_prev <- c(NA,
+                                    sum(jaccard_df_K2$N11_W12)/sum(c(jaccard_df_K2$N01_W12,jaccard_df_K2$N10_W12,jaccard_df_K2$N11_W12)),
+                                    sum(jaccard_df_K2$N11_W23)/sum(c(jaccard_df_K2$N01_W23,jaccard_df_K2$N10_W23,jaccard_df_K2$N11_W23)))
+
+
+stargazer(density_df_K2, summary = FALSE, title="Descriptive statistics cohort 2",
+           rownames = FALSE, type = "html", out = paste0("Results/descriptive_cohort2.html"))
+
+stargazer(imputation_df_K2, summary = FALSE, title="Descriptive statistics imputation cohort 2",
+           rownames = FALSE, type = "html", out = paste0("Results/descriptive_imputation_cohort2.html"))
+```
+### compare densities and degrees
+
+```{r}
+degree_denisty_df <- data.frame(ID = 1:66)
+
+#cohort 1
+relation_W1_K1_ma_del <- relation_W1_K1_ma[-c(1,15,20,21,24,33,34,38,39,40),-c(1,15,20,21,24,33,34,38,39,40)]
+relation_W1_K1_gr_del <- graph.adjacency(relation_W1_K1_ma_del, mode = "directed", diag = FALSE)
+
+relation_W2_K1_ma_del <- relation_W2_K1_ma[-c(1,15,20,21,24,33,34,38,39,40),-c(1,15,20,21,24,33,34,38,39,40)]
+relation_W2_K1_gr_del <- graph.adjacency(relation_W2_K1_ma_del, mode = "directed", diag = FALSE)
+
+relation_W3_K1_ma_del <- relation_W3_K1_ma[-c(1,15,20,21,24,33,34,38,39,40),-c(1,15,20,21,24,33,34,38,39,40)]
+relation_W3_K1_gr_del <- graph.adjacency(relation_W3_K1_ma_del, mode = "directed", diag = FALSE)
+
+#cohort 2
+relation_W1_K2_ma_del <- relation_W1_K2_ma[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64), -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)]
+relation_W1_K2_gr_del <- graph.adjacency(relation_W1_K2_ma_del, mode = "directed", diag = FALSE)
+
+relation_W2_K2_ma_del <- relation_W2_K2_ma[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64), -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)]
+relation_W2_K2_gr_del <- graph.adjacency(relation_W2_K2_ma_del, mode = "directed", diag = FALSE)
+
+relation_W3_K2_ma_del <- relation_W3_K2_ma[-c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64), -c(12,13,14,15,16,17,20,22,25,29,32,33,35,36,37,38,42,44,50,51,53,57,58,59,60,62,64)]
+relation_W3_K2_gr_del <- graph.adjacency(relation_W3_K2_ma_del, mode = "directed", diag = FALSE)
+
+
+#add to df
+degree_denisty_df <- left_join(degree_denisty_df, as.data.frame(degree(relation_W1_K1_gr_del, mode = "out")) %>%  mutate(ID = as.numeric(rownames(.))))
+degree_denisty_df <- left_join(degree_denisty_df, as.data.frame(degree(relation_W2_K1_gr_del, mode = "out")) %>%  mutate(ID = as.numeric(rownames(.))))
+degree_denisty_df <- left_join(degree_denisty_df, as.data.frame(degree(relation_W3_K1_gr_del, mode = "out")) %>%  mutate(ID = as.numeric(rownames(.))))
+degree_denisty_df <- left_join(degree_denisty_df, as.data.frame(degree(relation_W1_K2_gr_del, mode = "out")) %>%  mutate(ID = as.numeric(rownames(.))))
+degree_denisty_df <- left_join(degree_denisty_df, as.data.frame(degree(relation_W2_K2_gr_del, mode = "out")) %>%  mutate(ID = as.numeric(rownames(.))))
+degree_denisty_df <- left_join(degree_denisty_df, as.data.frame(degree(relation_W3_K2_gr_del, mode = "out")) %>%  mutate(ID = as.numeric(rownames(.))))
+colnames(degree_denisty_df) <- c("ID", "K1_W1","K1_W2","K1_W3", "K2_W1","K2_W2","K2_W3")
+
+#t_test
+t.test(degree_denisty_df$K1_W1,degree_denisty_df$K2_W1, alternative = "two.sided")
+t.test(degree_denisty_df$K1_W2,degree_denisty_df$K2_W2, alternative = "two.sided")
+t.test(degree_denisty_df$K1_W3,degree_denisty_df$K2_W3, alternative = "two.sided")
+```
+
+```{r}
+### t-test with p-values from permutation
+
+#wave 1
+print("wave1")
+t_obs_W1 <- t.test(degree_denisty_df$K1_W1,degree_denisty_df$K2_W1, alternative = "two.sided", var.equal = TRUE)$statistic
+t_obs_W1
+
+combined <- c(degree_denisty_df$K1_W1,degree_denisty_df$K2_W1)
+n_permutations <- 100000
+
+# Initialize a vector to store permutation t-statistics
+perm_t_stats <- numeric(n_permutations)
+
+# Perform permutations
+for (i in 1:n_permutations) {
+  permuted <- sample(combined) # Shuffle the combined data
+  perm_group1 <- permuted[1:length(degree_denisty_df$K1_W1)] # Assign to group1
+  perm_group2 <- permuted[(length(degree_denisty_df$K1_W1) + 1):length(permuted)] # Assign to group2
+  perm_t_stats[i] <- t.test(perm_group1, perm_group2, var.equal = TRUE)$statistic
+}
+
+p_value <- (sum(abs(perm_t_stats) >= abs(t_obs_W1)) + 1) / (n_permutations + 1)
+p_value
+
+#wave 2
+print("wave2")
+t_obs_W2 <- t.test(degree_denisty_df$K1_W2,degree_denisty_df$K2_W2, alternative = "two.sided", var.equal = TRUE)$statistic
+t_obs_W2
+
+combined <- c(degree_denisty_df$K1_W2,degree_denisty_df$K2_W2)
+
+# Perform permutations
+for (i in 1:n_permutations) {
+  permuted <- sample(combined) # Shuffle the combined data
+  perm_group1 <- permuted[1:length(degree_denisty_df$K1_W2)] # Assign to group1
+  perm_group2 <- permuted[(length(degree_denisty_df$K1_W2) + 1):length(permuted)] # Assign to group2
+  perm_t_stats[i] <- t.test(perm_group1, perm_group2, var.equal = TRUE)$statistic
+}
+
+p_value <- (sum(abs(perm_t_stats) >= abs(t_obs_W2)) + 1) / (n_permutations + 1)
+p_value
+
+#wave 3
+print("wave3")
+t_obs_W3 <- t.test(degree_denisty_df$K1_W3,degree_denisty_df$K2_W3, alternative = "two.sided", var.equal = TRUE)$statistic
+t_obs_W3
+
+combined <- c(degree_denisty_df$K1_W3,degree_denisty_df$K2_W3)
+
+# Perform permutations
+for (i in 1:n_permutations) {
+  permuted <- sample(combined) # Shuffle the combined data
+  perm_group1 <- permuted[1:length(degree_denisty_df$K1_W3)] # Assign to group1
+  perm_group2 <- permuted[(length(degree_denisty_df$K1_W3) + 1):length(permuted)] # Assign to group2
+  perm_t_stats[i] <- t.test(perm_group1, perm_group2, var.equal = TRUE)$statistic
+}
+
+p_value <- (sum(abs(perm_t_stats) >= abs(t_obs_W2)) + 1) / (n_permutations + 1)
+p_value
+```
+
+
+```{r}
+
+degree_df_long <- pivot_longer(degree_denisty_df, cols = starts_with("K"), names_to = "cohort_wave", values_to = "outdegree") %>% 
+  mutate(cohort = substr(cohort_wave,1,2),
+         wave = substr(cohort_wave,4,5)) %>% 
+  mutate(cohort = case_match(cohort,
+                           "K1" ~ "lockdown cohort",
+                           "K2" ~ "hybrid cohort"),
+         wave = case_match(wave,
+                           "W1" ~ "wave 1",
+                           "W2" ~ "wave 2",
+                           "W3" ~ "wave 3")) %>% 
+  mutate(cohort = factor(cohort, levels = c("lockdown cohort", "hybrid cohort")))
+
+degree_df_summary <- degree_df_long %>% 
+  group_by(cohort, wave) %>% 
+  summarize(mean_degree = mean(outdegree, na.rm = T)) %>% 
+  ungroup() #%>% 
+  # mutate(se_degree = c(std.error(degree_denisty_df$K1_W1,na.rm = T),
+  #                      std.error(degree_denisty_df$K1_W2,na.rm = T),
+  #                      std.error(degree_denisty_df$K1_W3,na.rm = T),
+  #                      std.error(degree_denisty_df$K2_W1,na.rm = T),
+  #                      std.error(degree_denisty_df$K2_W2,na.rm = T),
+  #                      std.error(degree_denisty_df$K2_W3,na.rm = T)))
+
+
+density_df_summary <- degree_df_summary %>% 
+  select(cohort, wave) %>% 
+  mutate(density = c(edge_density(relation_W1_K1_gr_del),
+                     edge_density(relation_W2_K1_gr_del),
+                     edge_density(relation_W3_K1_gr_del),
+                     edge_density(relation_W1_K2_gr_del),
+                     edge_density(relation_W2_K2_gr_del),
+                     edge_density(relation_W3_K2_gr_del)))
+
+
+```
+
+```{r}
+degree_plot <-
+ggplot(degree_df_summary, aes(x = wave, y = mean_degree, group = cohort, color = cohort, fill = cohort, shape =cohort)) +
+  geom_point(aes(shape = cohort),size = 3, stroke = 1.5) +
+  scale_color_manual(values = c("black","#ff0000"), labels = c("lockdown cohort","hybrid cohort"))+
+  guides(color = guide_legend(show.legend = F))+
+  scale_fill_manual(values = c("black","#ff0000"), labels = c("lockdown cohort","hybrid cohort"))+
+  scale_x_discrete(labels = c("start of term", "midterm", "end of term"))+
+  geom_line(aes(linetype = cohort),size = 1) +
+  #geom_ribbon(aes(ymin = mean_degree - se_degree*1.96, ymax = mean_degree + se_degree*1.96), alpha = 0.2) +
+  ylim(0,15)+
+  labs(y = "mean outdegree", x = "Wave", fill = "Cohort", color = "Cohort", linetype = "Cohort", shape = "Cohort") +
+  theme_bw() +
+  theme(plot.margin = unit(c(1, 1, 4, 3), "lines"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(vjust=0, hjust=0.5, angle = 0, size = 20),
+        axis.text.y = element_text(size = 18),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.border = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = 'top',
+        legend.text = element_text(size = 18),
+        legend.title = element_blank(),
+        rect = element_rect(fill = "transparent"),
+        panel.background = element_rect(fill = "transparent",
+                                        colour = NA_character_), # necessary to avoid drawing panel outline
+        plot.background = element_rect(fill = "transparent",
+                                       colour = NA_character_), # necessary to avoid drawing plot outline
+        legend.background = element_rect(fill = "transparent"),
+        #legend.box.background = element_rect(fill = "transparent"),
+        legend.key = element_rect(fill = "transparent"))
+
+density_plot <-
+ggplot(density_df_summary, aes(x = wave, y = density, group = cohort, color = cohort, fill = cohort)) +
+  geom_point(aes(shape = cohort),size = 3, stroke = 1.5) +
+    scale_color_manual(values = c("black","#ff0000"), labels = c("lockdown cohort","hybrid cohort"))+
+  guides(color = guide_legend(show.legend = F))+
+  scale_fill_manual(values = c("black","#ff0000"), labels = c("lockdown cohort","hybrid cohort"))+
+  scale_x_discrete(labels = c("start of term", "midterm", "end of term"))+
+  geom_line(aes(linetype = cohort),size = 1) +
+  ylim(0,0.3)+
+  labs(y = "density", x = "wave", fill = "Cohort", color = "Cohort", linetype = "Cohort", shape = "Cohort") +
+  theme_bw() +
+  theme(plot.margin = unit(c(1, 1, 4, 3), "lines"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(vjust=0, hjust=0.5, angle = 0, size = 20),
+        axis.text.y = element_text(size = 18),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.border = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = 'top',
+        legend.text = element_text(size = 18),
+        legend.title = element_blank(),
+        rect = element_rect(fill = "transparent"),
+        panel.background = element_rect(fill = "transparent",
+                                        colour = NA_character_), # necessary to avoid drawing panel outline
+        plot.background = element_rect(fill = "transparent",
+                                       colour = NA_character_), # necessary to avoid drawing plot outline
+        legend.background = element_rect(fill = "transparent"),
+        #legend.box.background = element_rect(fill = "transparent"),
+        legend.key = element_rect(fill = "transparent"))
+
+
+
+```
+
+```{r}
+png(filename = "density_cohort_compare2.png", width = 45, height = 17, units = "cm", res = 300)
+
+grid.arrange(density_plot, degree_plot, nrow = 1)
+
+dev.off()
+```
+
+
+### Jaccard Table both Cohorts
+```{r}
+# Jaccard_similarity <- data.frame(cohort = c("cohort 1", "cohort 2"),
+#                                  Jaccard_W12 = NA,
+#                                  Jaccard_W23 = NA)
+# Jaccard_similarity$Jaccard_W12 <- c(sum(jaccard_df_K1$N11_W12)/sum(c(jaccard_df_K1$N01_W12,jaccard_df_K1$N10_W12,jaccard_df_K1$N11_W12)), #cohort 1
+#                                     sum(jaccard_df_K2$N11_W12)/sum(c(jaccard_df_K2$N01_W12,jaccard_df_K2$N10_W12,jaccard_df_K2$N11_W12))) #cohort 2
+# Jaccard_similarity$Jaccard_W23 <- c(sum(jaccard_df_K1$N11_W23)/sum(c(jaccard_df_K1$N01_W23,jaccard_df_K1$N10_W23,jaccard_df_K1$N11_W23)), #cohort 1
+#                                     sum(jaccard_df_K2$N11_W23)/sum(c(jaccard_df_K2$N01_W23,jaccard_df_K2$N10_W23,jaccard_df_K2$N11_W23))) #cohort 2
+# print(Jaccard_similarity)
+# 
+# stargazer(Jaccard_similarity, summary = FALSE, title="Jaccard similarity between waves for both cohorts",
+#           rownames = FALSE, type = "html", out = paste0("Results/descriptive_Jaccard_similarity.html"))
+```
+
+
+
+### Friends and acquaintances not found
+
+Students were asked in the second wave respectively, how many of their friends and acquaintances in their year they did not find among the portraits i.e., who were in their cohort but did not take part in the study.
+
+```{r}
+not_found_K1 <- Welle2_K1 %>%
+  select(NW02001a) %>%
+  mutate(status =
+  case_match(NW02001a, "A1" ~ "I did not find more than 2 friends or acquaintances",
+             "A2" ~ "I did not find 2 friends or acquaintances",
+             "A3" ~ "I did not find 1 friend or acquaintance",
+             "A4" ~ "I found all my friends and acquaintances",
+             "A5" ~ "I am not sure"))
+table(not_found_K1$status)
+```
+```{r}
+not_found_K2 <- Welle2_K2 %>%
+  select(NW02001a) %>%
+  mutate(status =
+  case_match(NW02001a, "A1" ~ "I did not find more than 2 friends or acquaintances",
+             "A2" ~ "I did not find 2 friends or acquaintances",
+             "A3" ~ "I did not find 1 friend or acquaintance",
+             "A4" ~ "I found all my friends and acquaintances",
+             "A5" ~ "I am not sure"))
+table(not_found_K2$status)
+```
+
+```{r}
+not_found_K1_K2 <- data.frame(table(not_found_K1$status),table(not_found_K2$status))[,c(1,2,4)]
+colnames(not_found_K1_K2) <- c("status","cohort 1","cohort 2")
+print(not_found_K1_K2)
+
+stargazer(not_found_K1_K2, summary = FALSE, title="How many of your acquaintances and friends among your fellow students in the first semester of sociology could you NOT find in the pictures? Cohort 1, asked in second wave",
+          rownames = FALSE, type = "html", out = paste0("Results/descriptive_not_found.html"))
+```
+
+
+```{r}
+todaysdate <- format(Sys.Date(),"%y%m%d")
+save(list = ls(.GlobalEnv), file = paste0(todaysdate,"_descriptives_environment.Rdata"))
+```
+
+```{r}
+sessionInfo()
+```

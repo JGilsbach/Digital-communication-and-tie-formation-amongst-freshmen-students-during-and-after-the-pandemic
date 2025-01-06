@@ -1,0 +1,391 @@
+---
+title: "2.2_imputation_cohort2"
+author: "Judith Gilsbach"
+date: "2023-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(haven)
+library(tidyverse)
+library(tidygraph)
+library(network)
+library(igraph)
+library(RSiena)
+library(knitr)
+library(tableHTML)
+library(stargazer)
+```
+
+# Load environment from initial setup
+```{r}
+# load cleaned data
+```
+
+
+# Define helper functions
+
+```{r}
+#Define Function that will hopefully ensure convergence in RSiena (this is from Siena Manual)
+siena07ToConvergence <- function(alg, dat, eff, ans0 = NULL, threshold = 0.25,
+                                 nodes = 1, ...){
+  # parameters are:
+  # alg, dat, eff: Arguments for siena07: algorithm, data, effects object.
+  # ans0: previous answer, if available; used as prevAns in siena07.
+  # threshold: largest satisfactory value
+  #            for overall maximum convergence ratio (indicating convergence).
+  # nodes: number of processes for parallel processing.
+  if (!is.null(ans0)) {
+    alg$nsub = 6
+  }
+  numr <- 0 # number of repetitions
+  ans <- siena07(alg, data = dat, effects = eff, prevAns = ans0,
+                 nbrNodes = nodes, returnDeps = TRUE,
+                 useCluster = (nodes >= 2), ...) # the first run
+  repeat {
+    save(ans, file = paste("ans",numr,".RData",sep = "")) # to be safe
+    numr <- numr + 1         # count number of repeated runs
+    tm <- ans$tconv.max      # convergence indicator
+    cat(numr, tm,"\n")       # report how far we are
+    if (tm < threshold) {break}   # success
+    if (tm > 10) {break}     # divergence without much hope
+    # of returning to good parameter values
+    if (numr > 20) {break}  # now it has lasted too long
+    alg$nsub <- 1
+    alg$n2start <- 2 * (sum(eff$include) + 7) * 2.52**4
+    alg$n3 <- 3000
+    if (numr == 1) {alg$firstg <- alg$firstg/5}
+    ans <- siena07(alg, data = dat, effects = eff, prevAns = ans,
+                   nbrNodes = nodes, returnDeps = TRUE,
+                   useCluster = (nodes >= 2),...)
+  }
+  if (tm > threshold)
+  {
+    stop("Convergence inadequate.\n")
+  }
+  ans
+}
+
+#Since version 1.2-12, Maximum Likelihood (ML) estimation by Rsiena with returnDeps = TRUE returns an edgelist of the final network at the end of the phase 3 simulation.
+#The following function, getNet(), uses this edgelist to impute the data.
+
+getNet <- function(observedNet,edgeList) {
+  # observedNet = observed network as adjacency with missing data
+  # edgeList = edgelist that is returned by siena07(...)$sims
+  observedNet[is.na(observedNet)] <- 0
+  for (i in 1:nrow(edgeList)) {
+    observedNet[edgeList[i,1],edgeList[i,2]] <- 1
+  }
+  return(observedNet)
+}
+
+
+```
+
+# Imputation
+
+All 83 students who started their freshman year in sociology in fall 2020 were invited to take part in the study but only 66 took part in the study (42 out of 63 for the 1st cohort in fall 2020). We consider those as "taking part" who allowed us to take a photo of themselves or handed one in to be identified by their fellow students in the online survey and who additionally handed in the data protection agreement before the beginning of the field work of wave 1. 
+Missing data occurred due to some students not taking part in all waves of the study. This missing data on the tie level shall be imputed because it does not only affect the knowledge about the missing actor but also about the other actors potentially nominated by the missing actor.
+
+## Cohort 2 <br/>(2021/22)
+### Defining the imputation model
+
+For  a detailed introduction to imputation using SAOM see the script prepared by Robert Krause: https://www.stats.ox.ac.uk/~snijders/siena/AdSUMMissingDataMD.html
+
+```{r}
+imp_W1_K2 <- list() #create list to store the imputed network
+D <- 50 #number of imputations
+
+## Imputation with a stationary SAOM
+relation_K2_full <- sienaDependent(array(c(relation_W1_K2_ma, relation_W1_K2_ma), dim = c(66, 66, 2)) ,
+                          allowOnly = FALSE)
+
+Female_v2 <- as.vector(Attributes_K2$Female)
+Statistik_v2 <- as.vector(Attributes_K2$Statistik)
+WiW_v2 <- as.vector(Attributes_K2$WiW)
+both_tutorials_v2 <- as.vector(Attributes_K2$both_tutorials)
+
+Female2  <- coCovar(as.vector(Female_v2),centered=FALSE)
+Statistik2  <- coCovar(as.vector(Statistik_v2),centered=FALSE)
+WiW2  <- coCovar(as.vector(WiW_v2),centered=FALSE)
+both_tutorials2  <- coCovar(as.vector(both_tutorials_v2),centered=FALSE)
+w2.2 <- coDyadCovar(relation_W2_K2_ma) #wave 1 is especially sparse, therefore wave 2 is used as a dyadic predictor
+ 
+Data.stationary <- sienaDataCreate(relation_K2_full, Statistik2, WiW2, both_tutorials2, w2.2, Female2) 
+effects.stationary <- getEffects(Data.stationary)
+effects.stationary <- includeEffects(effects.stationary,
+                                     density, recip, outActSqrt, inPopSqrt, inActSqrt)
+effects.stationary <- setEffect(effects.stationary, gwespFF, parameter=138) 
+effects.stationary <- setEffect(effects.stationary, outTrunc, parameter=5) 
+#effects.stationary <- setEffect(effects.stationary, outTrunc2, parameter=6)
+
+
+effects.stationary <- includeEffects(effects.stationary, sameX,
+                                     interaction1 = "Statistik2")
+effects.stationary <- includeEffects(effects.stationary, sameX,
+                                     interaction1 = "WiW2")
+effects.stationary <- includeEffects(effects.stationary, sameX,
+                                      interaction1 = "both_tutorials2")
+effects.stationary <- includeEffects(effects.stationary, X, name = "relation_K2_full",
+                                     interaction1 = "w2.2")
+
+#Gender
+    # effects.stationary <- includeEffects(effects.stationary,  sameX,
+    #                               interaction1 =  "Female2")
+    # effects.stationary <- includeEffects(effects.stationary,  egoX,
+    #                               interaction1 =  "Female2")
+    effects.stationary <- includeEffects(effects.stationary,  altX,
+                                  interaction1 =  "Female2")
+
+effects.stationary <- setEffect(effects.stationary, Rate, initialValue = 50,
+                                name = "relation_K2_full", fix = TRUE, type = "rate")
+
+#Now we can estimate the stationary SAOM with Methods of Moments (MoM) estimation. One converged estimate will suffice.
+
+estimation.options <- sienaAlgorithmCreate(useStdInits = FALSE,
+                                           seed = 3419,
+                                           n3 = 1000, maxlike = FALSE,
+                                           cond = FALSE) #n3 =number of datasets simulated
+
+period0saom_K2 <- siena07ToConvergence(alg = estimation.options,
+                                    dat = Data.stationary,
+                                    eff = effects.stationary, threshold = 0.25)
+
+
+#Now change the RSiena algorithm to impuatation
+
+imputation.options <- sienaAlgorithmCreate(seed = 6790,
+                                           useStdInits = FALSE, 
+                                           maxlike = TRUE,
+                                           cond = FALSE, 
+                                           nsub = 0,
+                                           simOnly = TRUE,
+                                           n3 = 10)
+
+######################## Goodness of fit should ideally be evaluated before using the model for imputation ###################
+
+#Show results of the above model (the one that converged)
+period0saom_K2
+#t-ratio of the basic rate parameter is high and SE is NA, this is because the effect is fixed
+
+#check for autocorrelation
+period0saom_K2$ac
+
+#t-statistics = parameter estimate devided by standard error, if they are bigger than 1.96 they are significant at the 0.05-level
+significance_K2 <- ifelse((abs(period0saom_K2$theta/period0saom_K2$se)) > 1.96, TRUE, FALSE) #MIND: Absolute value
+significance_K2
+
+#check for collinearity
+summary(period0saom_K2)
+
+```
+
+### Imputing the first wave
+```{r}
+### To prepare the imputation two steps are necessary
+#1) One tie needs to be different between the waves (wave one is treated as the starting and the end wave for the imputation). It will be correctly changed back by the mL algorithm
+#2) All observed ties (except the changed one) will be set to structurally fixed values (1 = 11; 0 = 10)
+
+set.seed(437)
+for (i in 1:D) {
+  cat('imputation',i,'\n')
+  
+  n1 <- relation_W1_K2_ma
+  n1 <- n1 + 10
+  diag(n1) <- 0
+  n2 <- n1
+  tieList <- c(1:(nrow(n1)**2))[c(n1 == 11)]
+  tieList <- tieList[!is.na(tieList)]
+  
+  changedTie <- sample(tieList,1)
+  
+  n1[changedTie] <- 0
+  n2[changedTie] <- 1
+  
+  relation_K2_full <- sienaDependent(array(c(n1,n2), dim = c(66, 66, 2)),
+                            allowOnly = FALSE )
+  
+  Data.stationary <- sienaDataCreate(relation_K2_full,Statistik2,WiW2, both_tutorials2,w2.2, Female2)
+  
+  sims <- siena07(imputation.options, data = Data.stationary,
+                  effects = effects.stationary,
+                  prevAns = period0saom_K2,
+                  returnDeps = TRUE)$sims[[10]][[1]]
+  
+  imp_W1_K2[[i]] = getNet(relation_W1_K2_ma,sims)
+  
+}
+
+```
+
+### Imputation of the later waves
+
+```{r}
+#create lists for the imputed networks of wave 2 and 3
+imp_W2_K2 <- list()
+imp_W3_K2 <- list()
+
+#For each wave estimation is done using Method of Moments (MoM) and imputation with Maximum Likelihood (ML)
+#Imputation is repeated as often as the first wave had been imputed (D times)
+
+set.seed(1307)
+for (i in 1:D) {
+  
+  cat('imputation',i,'\n')
+  
+  # now impute wave2
+  
+  relation_K2_full <- sienaDependent(array(c(imp_W1_K2[[i]],relation_W2_K2_ma),
+                                  dim = c(66,66,2)))
+
+  Data.w2  <- sienaDataCreate(relation_K2_full, Statistik2, WiW2, both_tutorials2, Female2)
+  
+  
+  effects.twoWaves <- getEffects(Data.w2)
+  effects.twoWaves <- includeEffects(effects.twoWaves,
+                                     recip, density, outActSqrt, inPopSqrt, inActSqrt, outIso) 
+  effects.twoWaves <- setEffect(effects.twoWaves, gwespFF, parameter=138)
+
+  effects.twoWaves <- setEffect(effects.twoWaves, outTrunc, parameter=5)
+  #effects.twoWaves <- setEffect(effects.twoWaves, outTrunc2, parameter=6)
+
+  effects.twoWaves <- includeEffects(effects.twoWaves,  sameX,
+                                     interaction1 = "Statistik2")
+  effects.twoWaves <- includeEffects(effects.twoWaves,  sameX,
+                                     interaction1 = "WiW2")
+  effects.twoWaves <- includeEffects(effects.twoWaves,  sameX,
+                                     interaction1 = "both_tutorials2")
+  
+  #Gender
+    # effects.twoWaves <- includeEffects(effects.twoWaves,  sameX,
+    #                               interaction1 =  "Female2")
+    # effects.twoWaves <- includeEffects(effects.twoWaves,  egoX,
+    #                               interaction1 =  "Female2")
+    effects.twoWaves <- includeEffects(effects.twoWaves,  altX,
+                                  interaction1 =  "Female2")
+
+  if (i == 1) {
+    period1saom_K2 <- siena07ToConvergence(alg = estimation.options,
+                                        dat = Data.w2,
+                                        eff = effects.twoWaves,
+                                        threshold = 0.25)
+  } else {
+    period1saom_K2 <- siena07ToConvergence(alg = estimation.options,
+                                        dat = Data.w2,
+                                        eff = effects.twoWaves,
+                                        threshold = 0.25,
+                                        ans0 = period1saom_K2)
+  }
+  
+  sims <- siena07(imputation.options, data = Data.w2,
+                  effects = effects.twoWaves,
+                  prevAns = period1saom_K2,
+                  returnDeps = TRUE)$sims[[10]][[1]]
+  
+  imp_W2_K2[[i]] <- getNet(relation_W2_K2_ma,sims)
+
+########
+  # impute wave 3
+  
+  relation_K2_full <- sienaDependent(array(c(imp_W2_K2[[i]], relation_W3_K2_ma),
+                                   dim = c(66, 66, 2)))
+  Data.w3  <- sienaDataCreate(relation_K2_full, Statistik2,WiW2, both_tutorials2, Female2)
+  
+  if (i == 1) {
+    period2saom_K2 <- siena07ToConvergence(alg = estimation.options,
+                                        dat = Data.w3,
+                                        eff = effects.twoWaves,
+                                        threshold = 0.25)
+  } else {
+    period2saom_K2 <- siena07ToConvergence(alg = estimation.options,
+                                        dat = Data.w3,
+                                        eff = effects.twoWaves,
+                                        threshold = 0.25,
+                                        ans0 = period2saom_K2)
+  }
+  
+  
+  sims <- siena07(imputation.options, data = Data.w3,
+                  effects = effects.twoWaves,
+                  prevAns = period2saom_K2,
+                  returnDeps = TRUE)$sims[[10]][[1]]
+  
+  imp_W3_K2[[i]] = getNet(relation_W3_K2_ma,sims)
+  save.image('mi.RData') 
+}
+
+#check results:
+
+period1saom_K2
+period2saom_K2
+
+summary(period1saom_K2) 
+summary(period2saom_K2) 
+
+#check for autocorrelation (should be max abs 0.4)
+period1saom_K2$ac
+period2saom_K2$ac
+
+#t-statistics = parameter estimate devided by standard error, if they are bigger than 1.96 they are significant at the 0.05-level
+significance_p1_K2 <- ifelse((abs(period1saom_K2$theta/period1saom_K2$se)) > 1.96, TRUE, FALSE) #MIND: Absolute value
+significance_p1_K2 
+significance_p2_K2 <- ifelse((abs(period2saom_K2$theta/period2saom_K2$se)) > 1.96, TRUE, FALSE) #MIND: Absolute value
+significance_p2_K2 
+
+#check for collinearity
+summary(period0saom_K2)
+summary(period1saom_K2)
+summary(period2saom_K2)
+```
+
+
+# Assessing _Goodness of Fit_ for the impuation models
+
+## Cohort 2<br/>2021/22
+
+```{r}
+## Period 0
+# 1: Goodness of Fit for the last imputation respectively
+saom.model_K2.results.gof <- list()
+saom.model_K2.results.gof[[1]] <- plot(sienaGOF(period0saom_K2, varName="relation_K2_full", OutdegreeDistribution))
+saom.model_K2.results.gof[[2]] <- plot(sienaGOF(period0saom_K2, varName="relation_K2_full", IndegreeDistribution))
+#View results
+saom.model_K2.results.gof[[1]]
+saom.model_K2.results.gof[[2]]
+
+## Period 1
+saom.model_K2.results.gof1 <- list()
+saom.model_K2.results.gof1[[1]] <- plot(sienaGOF(period1saom_K2, varName="relation_K2_full", OutdegreeDistribution))
+saom.model_K2.results.gof1[[2]] <- plot(sienaGOF(period1saom_K2, varName="relation_K2_full", IndegreeDistribution))
+#View results
+saom.model_K2.results.gof1[[1]]
+saom.model_K2.results.gof1[[2]]
+
+## Period 2
+saom.model_K2.results.gof2 <- list()
+saom.model_K2.results.gof2[[1]] <- plot(sienaGOF(period2saom_K2, varName="relation_K2_full", OutdegreeDistribution))
+saom.model_K2.results.gof2[[2]] <- plot(sienaGOF(period2saom_K2, varName="relation_K2_full", IndegreeDistribution))
+#View results
+
+saom.model_K2.results.gof2[[1]]
+saom.model_K2.results.gof2[[2]]
+
+```
+
+```{r}
+todaysdate <- format(Sys.Date(),"%y%m%d")
+save(list = ls(.GlobalEnv), file = paste0(todaysdate,"_imputation_cohort2_environment_",D,"imp.Rdata"))
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+

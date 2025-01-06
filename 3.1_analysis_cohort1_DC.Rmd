@@ -1,0 +1,239 @@
+---
+title: "3.1_analysis_cohort1"
+author: "Judith Gilsbach"
+date: "2023-12-01"
+output: html_document
+---
+
+# Packages
+```{r}
+library(haven)
+library(tidyverse)
+library(tidygraph)
+library(network)
+library(igraph)
+library(RSiena)
+library(knitr)
+library(tableHTML)
+library(stargazer)
+```
+
+# Load environment from after imputation
+```{r}
+D <- 50 #number of imputations used in environment to load
+
+# load impuated data for cohort 1
+```
+
+# Define helper functions
+
+```{r}
+#Define Function that will hopefully ensure convergence in RSiena (this is from Siena Manual)
+siena07ToConvergence <- function(alg, dat, eff, ans0 = NULL, threshold = 0.25,
+                                 nodes = 1, ...){
+  # parameters are:
+  # alg, dat, eff: Arguments for siena07: algorithm, data, effects object.
+  # ans0: previous answer, if available; used as prevAns in siena07.
+  # threshold: largest satisfactory value
+  #            for overall maximum convergence ratio (indicating convergence).
+  # nodes: number of processes for parallel processing.
+  if (!is.null(ans0)) {
+    alg$nsub = 6
+  }
+  numr <- 0 # number of repetitions
+  ans <- siena07(alg, data = dat, effects = eff, prevAns = ans0,
+                 nbrNodes = nodes, returnDeps = TRUE,
+                 useCluster = (nodes >= 2), ...) # the first run
+  repeat {
+    save(ans, file = paste("ans",numr,".RData",sep = "")) # to be safe
+    numr <- numr + 1         # count number of repeated runs
+    tm <- ans$tconv.max      # convergence indicator
+    cat(numr, tm,"\n")       # report how far we are
+    if (tm < threshold) {break}   # success
+    if (tm > 10) {break}     # divergence without much hope
+    # of returning to good parameter values
+    if (numr > 20) {break}  # now it has lasted too long
+    alg$nsub <- 1
+    alg$n2start <- 2 * (sum(eff$include) + 7) * 2.52**4
+    alg$n3 <- 3000
+    if (numr == 1) {alg$firstg <- alg$firstg/5}
+    ans <- siena07(alg, data = dat, effects = eff, prevAns = ans,
+                   nbrNodes = nodes, returnDeps = TRUE,
+                   useCluster = (nodes >= 2),...)
+  }
+  if (tm > threshold)
+  {
+    stop("Convergence inadequate.\n")
+  }
+  ans
+}
+
+#Since version 1.2-12, Maximum Likelihood (ML) estimation by Rsiena with returnDeps = TRUE returns an edgelist of the final network at the end of the phase 3 simulation.
+#The following function, getNet(), uses this edgelist to impute the data.
+
+getNet <- function(observedNet,edgeList) {
+  # observedNet = observed network as adjacency with missing data
+  # edgeList = edgelist that is returned by siena07(...)$sims
+  observedNet[is.na(observedNet)] <- 0
+  for (i in 1:nrow(edgeList)) {
+    observedNet[edgeList[i,1],edgeList[i,2]] <- 1
+  }
+  return(observedNet)
+}
+
+
+```
+
+# Analysis
+## Cohort 1 <br> 2020/21
+```{r}
+#Specify SAOM
+saomResults_K1 <- list()
+
+#eithertut <- coDyadCovar(either_tutorial_K1) #either WiW or Statistics tutorial group shared
+
+Female_v <- as.vector(Attributes_K1$Female)
+Female  <- coCovar(as.vector(Female_v),centered=FALSE)
+
+D <- 50
+  
+  for (i in 1:D) {
+    cat('Imputation',i,'\n')
+    
+    relations_K1 <- sienaDependent(array(c(imp_W1_K1[[i]], imp_W2_K1[[i]],
+                                      imp_W3_K1[[i]]), dim = c( 42, 42, 3)))
+  
+    Data_K1  <- sienaDataCreate(relations_K1, Statistik, WiW, both_tutorials, Female) 
+    effectsData_K1 <- getEffects(Data_K1)
+    effectsData_K1 <- includeEffects(effectsData_K1,
+                                  recip, density, outActSqrt, inPopSqrt, inActSqrt, outIso)
+    
+    effectsData_K1 <- setEffect(effectsData_K1, gwespFF, parameter = 138)
+    
+    effectsData_K1 <- includeEffects(effectsData_K1,  sameX,
+                                  interaction1 =  "Statistik")
+    effectsData_K1 <- includeEffects(effectsData_K1,  sameX,
+                                  interaction1 =  "WiW")
+    effectsData_K1 <- includeEffects(effectsData_K1,  sameX,
+                                  interaction1 =  "both_tutorials")
+    # effectsData_K1 <- includeEffects(effectsData_K1, X, name = "relations_K1",
+    #                                  interaction1 = "eithertut")
+    
+    #Gender
+    effectsData_K1 <- includeEffects(effectsData_K1,  sameX,
+                                  interaction1 =  "Female")
+    effectsData_K1 <- includeEffects(effectsData_K1,  egoX,
+                                  interaction1 =  "Female")
+    effectsData_K1 <- includeEffects(effectsData_K1,  altX,
+                                  interaction1 =  "Female")
+    
+    
+    estimation.options_K1 <- sienaAlgorithmCreate(useStdInits = FALSE, seed = 312,
+                                               n3 = 1000, maxlike = FALSE, cond = FALSE,
+                                               lessMem = FALSE)
+    if (i == 1) {
+      saomResults_K1[[i]] <- siena07ToConvergence(alg = estimation.options_K1,
+                                               dat = Data_K1, eff = effectsData_K1,
+                                               threshold = 0.25)#,
+                                               #nodes = 2)
+    } else {
+      saomResults_K1[[i]] <- siena07ToConvergence(alg = estimation.options_K1,
+                                               dat = Data_K1, eff = effectsData_K1,
+                                               threshold = 0.25,
+                                               ans0 = saomResults_K1[[i - 1]])#, 
+                                              # nodes = 2)
+    }
+    save.image('mi_StatSAOM_K1.RData') 
+  }
+
+saomResults_K1[[1]]
+
+```
+
+```{r}
+#colliearity check
+summary(saomResults_K1[[1]])
+
+#check for autocorrelation
+saomResults_K1[[1]]$ac
+```
+
+```{r}
+#gof
+saom.results.gof_K1 <- list()
+saom.results.gof_K1[[1]] <- plot(sienaGOF(saomResults_K1[[1]], varName="relations_K1", OutdegreeDistribution))
+saom.results.gof_K1[[2]] <- plot(sienaGOF(saomResults_K1[[1]], varName="relations_K1", IndegreeDistribution))
+saom.results.gof_K1[[1]]
+saom.results.gof_K1[[2]]
+```
+
+The analysis was performed D times, as the network was imputed D times for each wave. Therefore, the analysis results will be pooled by Rubin's rule.
+```{r}
+#The combined estimate for the parameters is the average of the estimates of the D analyses
+rowVar <- function(x) {
+  rowSums((x - rowMeans(x))^2)/(dim(x)[2] - 1)
+}
+
+npar <- sum(effectsData_K1$include) #amount of parameters included
+
+#create an dataframe with all estimated parameters and standard errors
+MIResults_K1 <- as.data.frame(matrix(,npar,(2 * D)))
+
+for (i in 1:D) {
+  names(MIResults_K1)[i * 2 - 1] <- paste("imp" , "mean", sep = as.character(i))
+  names(MIResults_K1)[i * 2] <- paste("imp" , "se", sep = as.character(i))
+  MIResults_K1[,i * 2 - 1] <- saomResults_K1[[i]]$theta
+  MIResults_K1[,i * 2] <-  sqrt(diag(saomResults_K1[[i]]$covtheta))
+}
+
+#Now we get the average covariance structure between the parameters
+
+WDMIs_K1 <- matrix(0,npar,npar)
+
+for (i in 1:D) {
+  WDMIs_K1 <- WDMIs_K1 + saomResults_K1[[i]]$covtheta
+}
+
+WDMIs_K1 <- (1/D) * WDMIs_K1
+
+#Using Rubin’s Rules we combine the parameters and standard errors and complete the procedure
+
+finalResults_K1 <- as.data.frame(matrix(,npar,2))
+names(finalResults_K1) <- c("combinedEstimate", "combinedSE")
+rownames(finalResults_K1) <- effectsData_K1$effectName[effectsData_K1$include]
+finalResults_K1$combinedEstimate <- rowMeans(MIResults_K1[,seq(1,2*D,2)])
+finalResults_K1$combinedSE <- sqrt(diag(WDMIs_K1) + ((D + 1)/D) *
+                                  rowVar(MIResults_K1[,seq(1,2*D,2)]))
+
+#Odds Ratios
+finalResults_K1$OddsRatio <- exp(finalResults_K1$combinedEstimate)
+
+kable(round(finalResults_K1, 3))
+
+finalResults_rounded_K1 <- as.data.frame(round(finalResults_K1, 3))
+
+
+MIResults_K1 <- MIResults_K1
+
+#Significance
+
+finalResults_rounded_K1$sig <- NA
+finalResults_rounded_K1$sig[(abs(finalResults_rounded_K1$combinedEstimate) - abs(finalResults_rounded_K1$combinedSE)*1.96)>0]<- "*"
+finalResults_rounded_K1$sig[(abs(finalResults_rounded_K1$combinedEstimate) - abs(finalResults_rounded_K1$combinedSE)*2.58)>0]<- "**"
+finalResults_rounded_K1$sig[(abs(finalResults_rounded_K1$combinedEstimate) - abs(finalResults_rounded_K1$combinedSE)*3.29)>0]<- "***"
+
+#save the model results
+stargazer(finalResults_rounded_K1, summary = FALSE, title=paste0("Analysis results cohort 1, 1st wave imputed with stationary SAOM ",D,"imputations"),
+          rownames = TRUE, type = "html", out = "Results/SAOM_analysis_results_K1.html")
+
+```
+
+```{r}
+todaysdate <- format(Sys.Date(),"%y%m%d")
+save(list = ls(.GlobalEnv), file = paste0(todaysdate,"_analysis_cohort1_environment_",D,"imp.Rdata"))
+```
+
+```{r}
+sessionInfo()
+```
+

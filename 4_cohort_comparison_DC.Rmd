@@ -1,0 +1,731 @@
+---
+title: "4_cohort_comparison"
+author: "Judith Gilsbach"
+date: "2023-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(haven)
+library(tidyverse)
+library(tidygraph)
+library(network)
+library(igraph)
+library(RSiena)
+library(knitr)
+library(tableHTML)
+library(stargazer)
+library(RColorBrewer)
+library(gridExtra)
+library(pals)
+library(stringr)
+library(plotrix)
+library(ggsignif)
+```
+
+# Load environment from after imputation
+
+## cohort 1 <br/>(2020/21)
+```{r}
+D <- 50 #number of imputations used in environment to load
+
+#load analysis data for cohort one
+```
+
+## cohort 2 <br/>(2021/22)
+```{r}
+#load analysis data for cohort two
+```
+
+# Comparing cohorts according to RSiena manual
+
+Testing the differences between the two cohorts by estimating a z-score and then a p-value for the parameter statistics being different from each other:
+
+Test statistic (RSiena Manual, p. 105):
+
+$\frac{\hat{\beta}_{K1}-\hat{\beta}_{K2}}{\sqrt{(s.e._{K1})^2 + (s.e._{K2})^2}}$
+
+ 
+```{r}
+#renaming effects
+finalResults_rounded_K1$effect <- rownames(finalResults_K1)
+finalResults_rounded_K2$effect <- rownames(finalResults_K1)
+
+
+
+finalResults_rounded_compare <- full_join(finalResults_rounded_K1,finalResults_rounded_K2, by = "effect", suffix = c("_K1", "_K2"))
+finalResults_rounded_compare$z_value <- (finalResults_rounded_compare$combinedEstimate_K1 - finalResults_rounded_compare$combinedEstimate_K2) /
+                                              sqrt((finalResults_rounded_compare$combinedSE_K1)^2 + (finalResults_rounded_compare$combinedSE_K2)^2)
+finalResults_rounded_compare$p_value <- round(pnorm(abs(finalResults_rounded_compare$z_value), mean = 0, sd = 1, lower.tail = F),3)
+
+#print relevant columns
+finalResults_rounded_compare[,c(5,1,2,6,7,10,11)]
+
+#export
+finalResults_rounded_compare_reduced <- finalResults_rounded_compare[,c(5,1,2,6,7,10,11)] %>% 
+  mutate(est_se_K1 = paste0(as.character(format(round(combinedEstimate_K1,3)), nsmall = 3)," (",as.character(format(round(combinedSE_K1,3)), nsmall = 3),")"),
+         est_se_K2 = paste0(as.character(format(round(combinedEstimate_K2,3)), nsmall = 3)," (",as.character(format(round(combinedSE_K2,3)), nsmall = 3),")"),
+         p_value = as.character(format(round(p_value,3))),
+         p_value = if_else(p_value == "0.000", "<.001", substr(p_value,2,5)),
+         z_value = as.character(format(round(z_value,3)))) %>% 
+  select(effect,est_se_K1,est_se_K2,z_value,p_value)
+
+
+
+stargazer(finalResults_rounded_compare_reduced, summary = FALSE, title="Testing differences between cohorts",
+          rownames = TRUE, type = "html", out = "Results/differences_K1_K2.html")
+
+```
+
+```{r}
+#z-test for the within cohort comparison
+rates <- as.data.frame(t(finalResults_rounded_compare %>% 
+  filter(effect %in% c("constant relations_K1 rate (period 1)","constant relations_K1 rate (period 2)")) %>% 
+  select(starts_with("combinedE")))) 
+
+se <- as.data.frame(t(finalResults_rounded_compare %>% 
+  filter(effect %in% c("constant relations_K1 rate (period 1)","constant relations_K1 rate (period 2)")) %>% 
+  select(starts_with("combinedS"))))
+
+rates_se <- cbind(rates,se)
+colnames(rates_se) <- c("EstP1","EstP2","SEP1","SEP2")
+rates_se <- rates_se %>% 
+  mutate(z_value = (EstP1 - EstP2) / sqrt((SEP1)^2 + (SEP2)^2),
+         p_value =round(pnorm(abs(z_value), mean = 0, sd = 1, lower.tail = F), digits = 4))
+```
+
+Differences between periods not significant in either cohort.
+
+# Relative importance of effects
+modelled according to Indlekofer and Brandes (2013), RSiena manual sec. 13.5.1
+
+```{r}
+# expectedRI: a list that contains the expected relative importances of effects aggregated over all actors for each network observation. These are the averages of the actor related values in RIActors. This is equation (4) in Indlekofer and Brandes (2013).
+
+# cohort 1
+#RI_K1 <-sienaRI(Data_K1, saomResults_K1[[1]]) 
+#plot(RI_K1, addPieChart = T) # plot only for the first imputation
+
+
+
+rel_importance_imp_w1_se_wi <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_imp_w2_se_wi <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_imp_w3_se_wi <- data.frame(matrix(nrow = 13,ncol = D))
+
+rel_importance_impwise_w1 <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_impwise_w2 <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_impwise_w3 <- data.frame(matrix(nrow = 13,ncol = D))
+
+for (i in 1:D) {
+  if (i == 1) {
+    
+    RI_K1 <-sienaRI(Data_K1, saomResults_K1[[i]])
+    #average expected relative importance over all actors summing over all imputations
+    rel_importance_K1 <- as.matrix(as.data.frame(RI_K1$expectedRI, col.names = c("wave1","wave2","wave3")))
+    
+    #average expected relative importance over all actors by each imputation
+    rel_importance_impwise_w1[,i] <- RI_K1$expectedRI[[1]]
+    rel_importance_impwise_w2[,i] <- RI_K1$expectedRI[[2]]
+    rel_importance_impwise_w3[,i] <- RI_K1$expectedRI[[3]]
+    
+    #relative importance of individual actor decisions
+    rel_importance_actor_w1 <- as.matrix(as.data.frame(RI_K1$RIActors[[1]]))
+    rel_importance_actor_w2 <- as.matrix(as.data.frame(RI_K1$RIActors[[2]]))
+    rel_importance_actor_w3 <- as.matrix(as.data.frame(RI_K1$RIActors[[3]]))
+    
+    #within imputation standard error
+    rel_importance_imp_w1_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[1]])),2, std.error) #std.error
+    rel_importance_imp_w2_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[2]])),2, std.error) #std.error
+    rel_importance_imp_w3_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[3]])),2, std.error) #std.error
+    
+  } else {
+    
+    RI_K1 <-sienaRI(Data_K1, saomResults_K1[[i]])
+    #average expected relative importance over all actors; summing up over all imputations
+    rel_importance_K1 <- rel_importance_K1 + as.matrix(as.data.frame(RI_K1$expectedRI, col.names = c("wave1","wave2","wave3")))
+    
+    #average expected relative importance over all actors by each imputation
+    rel_importance_impwise_w1[,i] <- RI_K1$expectedRI[[1]]
+    rel_importance_impwise_w2[,i] <- RI_K1$expectedRI[[2]]
+    rel_importance_impwise_w3[,i] <- RI_K1$expectedRI[[3]]
+    
+    #relative importance of individual actor decisions; summing over all imputations
+    rel_importance_actor_w1 <- rel_importance_actor_w1 + as.matrix(as.data.frame(RI_K1$RIActors[[1]]))
+    rel_importance_actor_w2 <- rel_importance_actor_w2 + as.matrix(as.data.frame(RI_K1$RIActors[[2]]))
+    rel_importance_actor_w3 <- rel_importance_actor_w3 + as.matrix(as.data.frame(RI_K1$RIActors[[3]]))
+    
+    #within imputation standard error
+    rel_importance_imp_w1_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[1]])),2, std.error) #std.error
+    rel_importance_imp_w2_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[2]])),2, std.error) #std.error
+    rel_importance_imp_w3_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[3]])),2, std.error) #std.error
+   
+    
+  }
+}
+
+rel_importance_imp_se_final <- data.frame(matrix(nrow = 13, ncol = 0))
+rownames(rel_importance_imp_se_final) <- rownames(rel_importance_actor_w1)
+#within imputation standard error: average over imputations
+rel_importance_imp_se_final$w1_se_wi <- rowSums(rel_importance_imp_w1_se_wi^2)/D
+rel_importance_imp_se_final$w2_se_wi <- rowSums(rel_importance_imp_w2_se_wi^2)/D
+rel_importance_imp_se_final$w3_se_wi <- rowSums(rel_importance_imp_w3_se_wi^2)/D
+
+#between imputation standard error
+rel_importance_imp_w1_se_bi <- rowSums((rel_importance_impwise_w1 - rowMeans(rel_importance_impwise_w1))^2) / (D-1)
+rel_importance_imp_w2_se_bi <- rowSums((rel_importance_impwise_w2 - rowMeans(rel_importance_impwise_w2))^2) / (D-1)
+rel_importance_imp_w3_se_bi <- rowSums((rel_importance_impwise_w3 - rowMeans(rel_importance_impwise_w3))^2) / (D-1)
+
+rel_importance_imp_se_final$w1_se_bi <- rel_importance_imp_w1_se_bi
+rel_importance_imp_se_final$w2_se_bi <- rel_importance_imp_w2_se_bi
+rel_importance_imp_se_final$w3_se_bi <- rel_importance_imp_w3_se_bi
+
+#total standard error
+rel_importance_imp_se_final$w1_se_total <- sqrt(rel_importance_imp_se_final$w1_se_wi + rel_importance_imp_se_final$w1_se_bi + (rel_importance_imp_se_final$w1_se_bi / D))
+rel_importance_imp_se_final$w2_se_total <- sqrt(rel_importance_imp_se_final$w2_se_wi + rel_importance_imp_se_final$w2_se_bi + (rel_importance_imp_se_final$w2_se_bi / D))
+rel_importance_imp_se_final$w3_se_total <- sqrt(rel_importance_imp_se_final$w3_se_wi + rel_importance_imp_se_final$w3_se_bi + (rel_importance_imp_se_final$w3_se_bi / D))
+
+rel_importance_imp_se_final_K1 <- rel_importance_imp_se_final %>% 
+  select(ends_with("total"))
+
+
+rel_importance_K1 <- as.data.frame(rel_importance_K1/D)
+rel_importance_K1$effect <- factor(c("outdegree (density)",
+                                                        "reciprocity",
+                                                        "triadic closure (GWESP FF, alpha =1.38)",
+                                                        "indegree - popularity (sqrt)",
+                                                        "indegree - activity (sqrt)",
+                                                        "outdegree - activity (sqrt)",
+                                                        "out-isolates (students nominating nobody)",
+                                                        "same statistics tutorial group",
+                                                        "same introduction to science tutorial group",
+                                                        "both tutorial groups in common",
+                                                        "female receiver",
+                                                        "female sender",
+                                                        "same gender")) #, levels = RI_K1$effectNames)
+rel_importance_K1 <- rel_importance_K1 %>%
+  pivot_longer(!effect, names_to = "wave", values_to = "size") %>% 
+  mutate(effect = factor(effect, levels = as.character(unique(effect))))
+
+rel_importance_actor_w1 <- as.data.frame(rel_importance_actor_w1/D) 
+rel_importance_actor_w1$effect <- factor(c("outdegree (density)", "reciprocity", "triadic closure (GWESP FF, alpha =1.38)", "indegree - popularity (sqrt)",
+                                           "indegree - activity (sqrt)", "outdegree - activity (sqrt)", "out-isolates (students nominating nobody)", "same statistics tutorial group",
+                                           "same introduction to science tutorial group", "both tutorial groups in common", "female receiver", "female sender", "same gender")) #,
+#levels = RI_K1$effectNames)
+rel_importance_actor_w1 <- rel_importance_actor_w1 %>% 
+  pivot_longer(!effect, names_to = "actor", values_to = "size") %>% 
+  mutate(actor = as.numeric(str_sub(actor,2,-1)),
+         effect = factor(effect, levels = as.character(unique(effect))))
+
+rel_importance_actor_w2 <- as.data.frame(rel_importance_actor_w2/D)
+rel_importance_actor_w2$effect <- factor(RI_K1$effectNames, levels = RI_K1$effectNames)
+rel_importance_actor_w2 <- rel_importance_actor_w2 %>% 
+  pivot_longer(!effect, names_to = "actor", values_to = "size") %>% 
+  mutate(actor = as.numeric(str_sub(actor,2,-1)),
+         effect = factor(effect, levels = as.character(unique(effect))))
+
+rel_importance_actor_w3 <- as.data.frame(rel_importance_actor_w3/D)
+rel_importance_actor_w3$effect <- factor(RI_K1$effectNames, levels = RI_K1$effectNames)
+rel_importance_actor_w3 <- rel_importance_actor_w3 %>% 
+  pivot_longer(!effect, names_to = "actor", values_to = "size") %>% 
+  mutate(actor = as.numeric(str_sub(actor,2,-1)),
+         effect = factor(effect, levels = as.character(unique(effect))))
+
+#piechart by wave
+#png(filename = "Pies_RI_K1.png", width = 35, height = 15, units = "cm", res = 300)
+
+pies <- 
+ggplot(rel_importance_K1, aes(x="", y=size, fill=effect))+
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0, direction = -1)+
+  scale_fill_manual(values=unname(cols25()))+
+  labs(x="",y="") +
+  theme_minimal()+
+  theme(panel.grid = element_blank())+
+  facet_grid(.~wave)+
+  theme(legend.position = "bottom",
+        axis.ticks = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        strip.text.x = element_text(size = 14))
+
+#dev.off()
+
+
+#barchart by wave and actor
+
+#png(filename = "Bars_RI_K1_w1.png", width = 25, height = 15, units = "cm", res = 300)
+
+bars_actor_K1_w1 <- 
+ggplot(rel_importance_actor_w1, aes(x=actor, y=size, fill=effect)) +
+  geom_bar(stat="identity", width=.8)+
+  scale_fill_manual(values=unname(cols25()))+#, labels = as.factor(as.character(str_sub(rel_importance_actor_w1$effect, 6,-1))))+
+  ylab("relative importance") +
+  ggtitle("wave1")+
+  scale_x_continuous("actor", labels = as.character(rel_importance_actor_w1$actor), breaks = rel_importance_actor_w1$actor)+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+bars_actor_K1_w2 <- 
+ggplot(rel_importance_actor_w2, aes(x=actor, y=size, fill=effect)) +
+  geom_bar(stat="identity", width=.8)+
+  scale_fill_manual(values=unname(cols25()))+#, labels = as.factor(as.character(str_sub(rel_importance_actor_w2$effect, 6,-1))))+
+  ylab("relative importance") +
+  ggtitle("wave2")+
+  scale_x_continuous("actor", labels = as.character(rel_importance_actor_w2$actor), breaks = rel_importance_actor_w2$actor)+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+bars_actor_K1_w3 <- 
+ggplot(rel_importance_actor_w3, aes(x=actor, y=size, fill=effect)) +
+  geom_bar(stat="identity", width=.8)+
+  scale_fill_manual(values=unname(cols25()))+#, labels = as.factor(as.character(str_sub(rel_importance_actor_w3$effect, 6,-1))))+
+  ylab("relative importance") +
+  ggtitle("wave3")+
+  scale_x_continuous("actor", labels = as.character(rel_importance_actor_w3$actor), breaks = rel_importance_actor_w3$actor)+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+
+#png(filename = "Bars_RI_K1_allwaves.png", width = 35, height = 50, units = "cm", res = 300)
+
+grid.arrange(bars_actor_K1_w1, bars_actor_K1_w2, bars_actor_K1_w3, nrow = 3) # +pies alternatively
+
+#dev.off()
+
+
+#create table with standard deviations
+rel_importance_sd_w1_K1 <- rel_importance_actor_w1 %>% 
+  group_by(effect) %>% 
+  mutate(averageRI.w1 = mean(size),
+         sdRI.w1 = sd(size)) %>% 
+  slice(1) %>% 
+  select(-actor,-size)
+
+rel_importance_sd_w2_K1 <- rel_importance_actor_w2 %>% 
+  group_by(effect) %>% 
+  mutate(averageRI.w2 = mean(size),
+         sdRI.w2 = sd(size)) %>% 
+  slice(1) %>% 
+  select(-actor,-size) %>% 
+  ungroup %>% 
+  mutate(effect = rel_importance_sd_w1_K1$effect)
+
+
+rel_importance_sd_w3_K1 <- rel_importance_actor_w3%>% 
+  group_by(effect) %>% 
+  mutate(averageRI.w3 = mean(size),
+         sdRI.w3 = sd(size)) %>% 
+  slice(1) %>% 
+  select(-actor,-size) %>% 
+  ungroup %>% 
+  mutate(effect = rel_importance_sd_w1_K1$effect)
+
+rel_importance_sd_K1 <- full_join(rel_importance_sd_w1_K1,rel_importance_sd_w2_K1, by = "effect") %>%
+  left_join(.,rel_importance_sd_w3_K1, by = "effect")
+
+```
+
+```{r}
+#  cohort 2
+# RI_K2 <-sienaRI(Data_K2, saomResults_K2[[1]]) 
+# plot(RI_K2, addPieChart = T) # plot only for the first imputation
+
+
+rel_importance_imp_w1_se_wi <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_imp_w2_se_wi <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_imp_w3_se_wi <- data.frame(matrix(nrow = 13,ncol = D))
+
+rel_importance_impwise_w1 <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_impwise_w2 <- data.frame(matrix(nrow = 13,ncol = D))
+rel_importance_impwise_w3 <- data.frame(matrix(nrow = 13,ncol = D))
+
+for (i in 1:D) {
+  if (i == 1) {
+    
+    RI_K2 <-sienaRI(Data_K2, saomResults_K2[[i]])
+    #average expected relative importance over all actors summing over all imputations
+    rel_importance_K2 <- as.matrix(as.data.frame(RI_K2$expectedRI, col.names = c("wave1","wave2","wave3")))
+    
+    #average expected relative importance over all actors by each imputation
+    rel_importance_impwise_w1[,i] <- RI_K2$expectedRI[[1]]
+    rel_importance_impwise_w2[,i] <- RI_K2$expectedRI[[2]]
+    rel_importance_impwise_w3[,i] <- RI_K2$expectedRI[[3]]
+    
+    #relative importance of individual actor decisions
+    rel_importance_actor_w1 <- as.matrix(as.data.frame(RI_K2$RIActors[[1]]))
+    rel_importance_actor_w2 <- as.matrix(as.data.frame(RI_K2$RIActors[[2]]))
+    rel_importance_actor_w3 <- as.matrix(as.data.frame(RI_K2$RIActors[[3]]))
+    
+    #within imputation standard error
+    rel_importance_imp_w1_se_wi[,i] <- apply(as.data.frame(t(RI_K2$RIActors[[1]])),2, std.error) #sd or std.error
+    rel_importance_imp_w2_se_wi[,i] <- apply(as.data.frame(t(RI_K2$RIActors[[2]])),2, std.error) #sd or std.error
+    rel_importance_imp_w3_se_wi[,i] <- apply(as.data.frame(t(RI_K2$RIActors[[3]])),2, std.error) #sd or std.error
+    #rel_importance_imp_w2_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[2]])),2, sd) /sqrt(ncol(as.data.frame(RI_K1$RIActors[[2]])))
+    #rel_importance_imp_w3_se_wi[,i] <- apply(as.data.frame(t(RI_K1$RIActors[[3]])),2, sd) /sqrt(ncol(as.data.frame(RI_K1$RIActors[[3]])))
+    
+  } else {
+    
+    RI_K2 <-sienaRI(Data_K2, saomResults_K2[[i]])
+    #average expected relative importance over all actors; summing up over all imputations
+    rel_importance_K2 <- rel_importance_K2 + as.matrix(as.data.frame(RI_K2$expectedRI, col.names = c("wave1","wave2","wave3")))
+    
+    #average expected relative importance over all actors by each imputation
+    rel_importance_impwise_w1[,i] <- RI_K2$expectedRI[[1]]
+    rel_importance_impwise_w2[,i] <- RI_K2$expectedRI[[2]]
+    rel_importance_impwise_w3[,i] <- RI_K2$expectedRI[[3]]
+    
+    #relative importance of individual actor decisions; summing over all imputations
+    rel_importance_actor_w1 <- rel_importance_actor_w1 + as.matrix(as.data.frame(RI_K2$RIActors[[1]]))
+    rel_importance_actor_w2 <- rel_importance_actor_w2 + as.matrix(as.data.frame(RI_K2$RIActors[[2]]))
+    rel_importance_actor_w3 <- rel_importance_actor_w3 + as.matrix(as.data.frame(RI_K2$RIActors[[3]]))
+    
+    #within imputation standard error
+    rel_importance_imp_w1_se_wi[,i] <- apply(as.data.frame(t(RI_K2$RIActors[[1]])),2, std.error) #sd or std.error
+    rel_importance_imp_w2_se_wi[,i] <- apply(as.data.frame(t(RI_K2$RIActors[[2]])),2, std.error) #sd or std.error
+    rel_importance_imp_w3_se_wi[,i] <- apply(as.data.frame(t(RI_K2$RIActors[[3]])),2, std.error) #sd or std.error
+   
+    
+  }
+}
+
+rel_importance_imp_se_final <- data.frame(matrix(nrow = 13, ncol = 0))
+rownames(rel_importance_imp_se_final) <- rownames(rel_importance_actor_w1)
+#within imputation standard error: average over imputations
+rel_importance_imp_se_final$w1_se_wi <- rowSums(rel_importance_imp_w1_se_wi^2)/D
+rel_importance_imp_se_final$w2_se_wi <- rowSums(rel_importance_imp_w2_se_wi^2)/D
+rel_importance_imp_se_final$w3_se_wi <- rowSums(rel_importance_imp_w3_se_wi^2)/D
+
+#between imputation standard error
+rel_importance_imp_w1_se_bi <- rowSums((rel_importance_impwise_w1 - rowMeans(rel_importance_impwise_w1))^2) / (D-1)
+rel_importance_imp_w2_se_bi <- rowSums((rel_importance_impwise_w2 - rowMeans(rel_importance_impwise_w2))^2) / (D-1)
+rel_importance_imp_w3_se_bi <- rowSums((rel_importance_impwise_w3 - rowMeans(rel_importance_impwise_w3))^2) / (D-1)
+
+rel_importance_imp_se_final$w1_se_bi <- rel_importance_imp_w1_se_bi
+rel_importance_imp_se_final$w2_se_bi <- rel_importance_imp_w2_se_bi
+rel_importance_imp_se_final$w3_se_bi <- rel_importance_imp_w3_se_bi
+
+#total standard error
+rel_importance_imp_se_final$w1_se_total <- sqrt(rel_importance_imp_se_final$w1_se_wi + rel_importance_imp_se_final$w1_se_bi + (rel_importance_imp_se_final$w1_se_bi / D))
+rel_importance_imp_se_final$w2_se_total <- sqrt(rel_importance_imp_se_final$w2_se_wi + rel_importance_imp_se_final$w2_se_bi + (rel_importance_imp_se_final$w2_se_bi / D))
+rel_importance_imp_se_final$w3_se_total <- sqrt(rel_importance_imp_se_final$w3_se_wi + rel_importance_imp_se_final$w3_se_bi + (rel_importance_imp_se_final$w3_se_bi / D))
+
+rel_importance_imp_se_final_K2 <- rel_importance_imp_se_final %>% 
+  select(ends_with("total"))
+
+
+rel_importance_K2 <- as.data.frame(rel_importance_K2/D)
+rel_importance_K2$effect <- factor(c("outdegree (density)", "reciprocity", "triadic closure (GWESP FF, alpha =1.38)", "indegree - popularity (sqrt)", "indegree - activity (sqrt)",
+                    "outdegree - activity (sqrt)", "out-isolates (students nominating nobody)", "same statistics tutorial group", "same introduction to science tutorial group",
+                    "both tutorial groups in common", "female receiver", "female sender", "same gender")) #, levels = RI_K2$effectNames)
+rel_importance_K2 <- rel_importance_K2 %>%
+  pivot_longer(!effect, names_to = "wave", values_to = "size") %>% 
+  mutate(effect = factor(effect, levels = as.character(unique(effect))))
+
+rel_importance_actor_w1 <- as.data.frame(rel_importance_actor_w1/D) 
+rel_importance_actor_w1$effect <- factor(RI_K2$effectNames, levels = RI_K2$effectNames)
+rel_importance_actor_w1 <- rel_importance_actor_w1 %>% 
+  pivot_longer(!effect, names_to = "actor", values_to = "size") %>% 
+  mutate(actor = as.numeric(str_sub(actor,2,-1)),
+         effect = factor(effect, levels = as.character(unique(effect))))
+
+rel_importance_actor_w2 <- as.data.frame(rel_importance_actor_w2/D)
+rel_importance_actor_w2$effect <- factor(RI_K2$effectNames, levels = RI_K2$effectNames)
+rel_importance_actor_w2 <- rel_importance_actor_w2 %>% 
+  pivot_longer(!effect, names_to = "actor", values_to = "size") %>% 
+  mutate(actor = as.numeric(str_sub(actor,2,-1)),
+         effect = factor(effect, levels = as.character(unique(effect))))
+
+rel_importance_actor_w3 <- as.data.frame(rel_importance_actor_w3/D)
+rel_importance_actor_w3$effect <- factor(RI_K2$effectNames, levels = RI_K2$effectNames)
+rel_importance_actor_w3 <- rel_importance_actor_w3 %>% 
+  pivot_longer(!effect, names_to = "actor", values_to = "size") %>% 
+  mutate(actor = as.numeric(str_sub(actor,2,-1)),
+         effect = factor(effect, levels = as.character(unique(effect))))
+
+#piechart by wave
+#png(filename = "Pies_RI_K2.png", width = 25, height = 15, units = "cm", res = 300)
+
+pies <- 
+  ggplot(rel_importance_K2, aes(x="", y=size, fill=effect)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0, direction = -1)+
+  scale_fill_manual(values=unname(cols25())) +
+  labs(x="",y="") +
+  theme_minimal()+
+  theme(panel.grid = element_blank())+
+  facet_grid(.~wave)+
+  theme(legend.position = "bottom",
+        axis.ticks = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        strip.text.x = element_text(size = 14))
+
+#dev.off()
+
+
+#barchart by wave and actor
+
+#png(filename = "Bars_RI_K2_w1.png", width = 25, height = 15, units = "cm", res = 300)
+
+bars_actor_K2_w1 <- 
+  ggplot(rel_importance_actor_w1, aes(x=actor, y=size, fill=effect)) +
+  geom_bar(stat="identity", width=.8)+
+  scale_fill_manual(values=unname(cols25()), labels = as.factor(as.character(str_sub(rel_importance_actor_w1$effect, 6,-1))))+
+  ylab("relative importance") +
+  ggtitle("wave1")+
+  scale_x_continuous("actor", labels = as.character(rel_importance_actor_w1$actor), breaks = rel_importance_actor_w1$actor)+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+bars_actor_K2_w2 <- 
+  ggplot(rel_importance_actor_w2, aes(x=actor, y=size, fill=effect)) +
+  geom_bar(stat="identity", width=.8)+
+  scale_fill_manual(values=unname(cols25()), labels = as.factor(as.character(str_sub(rel_importance_actor_w2$effect, 6,-1))))+
+  ylab("relative importance") +
+  ggtitle("wave2")+
+  scale_x_continuous("actor", labels = as.character(rel_importance_actor_w2$actor), breaks = rel_importance_actor_w2$actor)+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+bars_actor_K2_w3 <- 
+  ggplot(rel_importance_actor_w3, aes(x=actor, y=size, fill=effect)) +
+  geom_bar(stat="identity", width=.8)+
+  scale_fill_manual(values=unname(cols25()), labels = as.factor(as.character(str_sub(rel_importance_actor_w3$effect, 6,-1))))+
+  ylab("relative importance") +
+  ggtitle("wave3")+
+  scale_x_continuous("actor", labels = as.character(rel_importance_actor_w3$actor), breaks = rel_importance_actor_w3$actor)+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+
+#png(filename = "Bars_RI_K2_allwaves.png", width = 35, height = 50, units = "cm", res = 300)
+
+grid.arrange(bars_actor_K2_w1, bars_actor_K2_w2, bars_actor_K2_w3, nrow = 3) # +pies alternatively
+
+#dev.off()
+
+
+#create table with standard deviations
+rel_importance_sd_w1_K2 <- rel_importance_actor_w1 %>% 
+  group_by(effect) %>% 
+  mutate(averageRI.w1 = mean(size),
+         sdRI.w1 = sd(size)) %>% 
+  slice(1) %>% 
+  select(-actor,-size)
+
+rel_importance_sd_w2_K2 <- rel_importance_actor_w2 %>% 
+  group_by(effect) %>% 
+  mutate(averageRI.w2 = mean(size),
+         sdRI.w2 = sd(size)) %>% 
+  slice(1) %>% 
+  select(-actor,-size)
+
+rel_importance_sd_w3_K2 <- rel_importance_actor_w3%>% 
+  group_by(effect) %>% 
+  mutate(averageRI.w3 = mean(size),
+         sdRI.w3 = sd(size)) %>% 
+  slice(1) %>% 
+  select(-actor,-size)
+
+rel_importance_sd_K2 <- left_join(rel_importance_sd_w1_K2,rel_importance_sd_w2_K2, by = "effect") %>%
+  left_join(.,rel_importance_sd_w3_K2, by = "effect")
+```
+
+```{r}
+#bars as alternative to pies on wave level averaged over all actors and imputations
+rel_importance_K2 <- rel_importance_K2 %>% mutate(cohort = "hybrid\ncohort")
+rel_importance_K1 <- rel_importance_K1 %>% mutate(cohort = "lockdown\ncohort")
+rel_importance_both <- rbind(rel_importance_K1, rel_importance_K2) %>% 
+  mutate(cohort = factor(cohort, levels = c("lockdown\ncohort","hybrid\ncohort")))
+  
+
+bars_both <- 
+  ggplot(rel_importance_both, aes(x="", y=size, fill=rev(effect))) +
+  geom_bar(stat="identity", width=0.5) +
+  coord_flip()+
+  #coord_polar("y", start=0, direction = -1)+
+  scale_fill_manual(values=unname(cols25()[13:1]),
+                    labels= rev(levels(rel_importance_both$effect))) +
+  labs(x="",y="") +
+  theme_minimal()+
+  theme(panel.grid = element_blank())+
+  facet_grid(cohort ~ wave, switch = "y")+
+  guides(fill = guide_legend(reverse=T, title = "Effect"))+
+  theme(legend.position = "bottom",
+        #strip.text.x.bottom = element_text(angle = 0),
+        axis.ticks = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        strip.text.y = element_text(size = 12),
+        strip.text.x = element_text(size = 14))
+
+
+#png(filename = "Pies_as_Bars_RI_K1K2_allwaves.png", width = 35, height = 8, units = "cm", res = 300)
+
+bars_both
+
+#dev.off()
+
+
+
+```
+
+
+# Compare cohorts 
+
+```{r}
+colnames(rel_importance_imp_se_final_K1) <- c("wave1","wave2","wave3")
+rel_importance_imp_se_final_K1 <- rel_importance_imp_se_final_K1 %>% 
+  mutate(effect = factor(c("outdegree (density)", "reciprocity", "triadic closure (GWESP FF, alpha =1.38)", "indegree - popularity (sqrt)", "indegree - activity (sqrt)",
+                    "outdegree - activity (sqrt)", "out-isolates (students nominating nobody)", "same statistics tutorial group", "same introduction to science tutorial group",
+                    "both tutorial groups in common", "female receiver", "female sender", "same gender"))) %>% 
+  pivot_longer(cols = c("wave1","wave2","wave3"), names_to = "wave",values_to = "pooled_se")
+
+colnames(rel_importance_imp_se_final_K2) <- c("wave1","wave2","wave3")
+rel_importance_imp_se_final_K2 <- rel_importance_imp_se_final_K2 %>% 
+  mutate(effect = factor(c("outdegree (density)", "reciprocity", "triadic closure (GWESP FF, alpha =1.38)", "indegree - popularity (sqrt)", "indegree - activity (sqrt)",
+                    "outdegree - activity (sqrt)", "out-isolates (students nominating nobody)", "same statistics tutorial group", "same introduction to science tutorial group",
+                    "both tutorial groups in common", "female receiver", "female sender", "same gender"))) %>% 
+  pivot_longer(cols = c("wave1","wave2","wave3"), names_to = "wave",values_to = "pooled_se")
+```
+
+```{r}
+K1_RI_se <- left_join(rel_importance_K1, rel_importance_imp_se_final_K1, by = c("wave", "effect")) %>% 
+  mutate(cohort = "K1",
+         effect = as.factor(effect)) 
+
+K2_RI_se <- left_join(rel_importance_K2, rel_importance_imp_se_final_K2, by = c("wave", "effect")) %>% 
+  mutate(cohort = "K2",
+         effect = as.factor(effect)) 
+
+#for the visualization the 83.4 conf. Intervalls are used because they resemble 95% best for group comparisons
+qnorm(1-(1-0.834)/2)
+
+both_cohorts_RI_se <- rbind(K1_RI_se, K2_RI_se)
+
+both_cohorts_RI_se_cohort <- left_join(K1_RI_se,K2_RI_se, by = c("wave", "effect"), suffix = c(".k1", ".k2")) %>% 
+  mutate(lower.k1 = size.k1 -1.385*pooled_se.k1,
+         upper.k1 = size.k1 +1.385*pooled_se.k1,
+         lower.k2 = size.k2 -1.385*pooled_se.k2,
+         upper.k2 = size.k2 +1.385*pooled_se.k2) %>% 
+  mutate(maximum = if_else(upper.k1>upper.k2,upper.k1,upper.k2)) %>% 
+  arrange(wave) %>% 
+  mutate(z_value = (size.k1 - size.k2) / sqrt((pooled_se.k1)^2 + (pooled_se.k2)^2),
+         p_value =round(pnorm(abs(z_value), mean = 0, sd = 1, lower.tail = F), digits = 4),
+         sig = if_else(p_value < 0.001, "***", #0.1%
+                       if_else(p_value < 0.01, "**", #1%
+                               if_else(p_value < 0.05, "*", #5%
+                                       "n.s."))),
+         p_value_ttest = round(pt(-abs(z_value), df=(((42+66)/2)-2), lower.tail = TRUE),3),
+         sig_ttest = if_else(p_value_ttest < 0.001, "***", #0.1%
+                       if_else(p_value_ttest < 0.01, "**", #1%
+                               if_else(p_value_ttest < 0.05, "*", #5%
+                                       "n.s."))))
+```
+
+
+```{r}
+#print table about RI comparison for appendix
+both_cohorts_RI_se_cohort_print <- both_cohorts_RI_se_cohort %>% 
+  mutate(est_se_K1 = paste0(as.character(format(round(size.k1,3)), nsmall = 3)," (",as.character(format(round(pooled_se.k1,3)), nsmall = 3),")"),
+         est_se_K2 = paste0(as.character(format(round(size.k2,3)), nsmall = 3)," (",as.character(format(round(pooled_se.k2,3)), nsmall = 3),")"),
+         effect = as.character(effect)) %>% 
+  select(effect, wave, est_se_K1,est_se_K2,p_value) %>% 
+  mutate(effect = as.character(effect),
+         p_value = as.character(format(round(p_value,3))),
+         p_value = if_else(p_value == "0.000", "<.001", substr(p_value,2,5))) %>% 
+  pivot_wider(names_from = wave, values_from = c(est_se_K1,est_se_K2,p_value)) %>% 
+  select(effect, ends_with("wave1"),ends_with("wave2"),ends_with("wave3"))
+  
+```
+
+```{r}
+stargazer(both_cohorts_RI_se_cohort_print, summary = FALSE, title="Testing differences between cohorts Relative Importance",
+          rownames = TRUE, type = "html", out = "Results/differences_K1_K2_RI.html")
+```
+
+
+
+```{r, warning=FALSE}
+level_order <- c("outdegree (density)", "reciprocity", "triadic closure (GWESP FF, alpha =1.38)", "indegree - popularity (sqrt)", "indegree - activity (sqrt)",
+                    "outdegree - activity (sqrt)", "out-isolates (students nominating nobody)", "same statistics tutorial group", "same introduction to science tutorial group",
+                    "both tutorial groups in common", "female receiver", "female sender", "same gender")
+
+both_cohorts_RI_se_reduced <- both_cohorts_RI_se %>%
+  filter(effect %in% c("triadic closure (GWESP FF, alpha =1.38)","same statistics tutorial group", "same introduction to science tutorial group", "both tutorial groups in common"))
+both_cohorts_RI_se_cohort_reduced <- both_cohorts_RI_se_cohort %>%
+  filter(effect %in% c("triadic closure (GWESP FF, alpha =1.38)","same statistics tutorial group", "same introduction to science tutorial group", "both tutorial groups in common"))
+
+plot_compare_reduced <- ggplot(data=both_cohorts_RI_se_reduced,
+                               aes(x = factor(effect, level = level_order), y = size, color = cohort), groups = 1)+ 
+  geom_point(aes(shape =  cohort),size = 3, position = position_dodge(w = 0.35)) +
+  #ylim(0,0.28)+
+  scale_y_continuous(limits = c(0,0.28), breaks=c(0,0.05,0.1,0.15,0.2,0.25))+
+  ylab("relative importance of effects\naveraged over actors, pooled (D = 50)")+
+  scale_x_discrete(labels = c("triadic closure\n(GWESP FF, alpha =1.38)","same statistics\ntutorial group", "same introduction\nto science tutorial group", "both tutorial groups\nin common"))+
+  guides(color = guide_legend(override.aes = list(size=10),
+                              title = ""),
+         shape = guide_legend(override.aes = list(size=10),
+                               title = ""))+
+  geom_errorbar(data=both_cohorts_RI_se_reduced, # %>%  filter(wave == "wave1"),
+                aes(ymin=size-(pooled_se*1.385),ymax=size+(pooled_se*1.385)),
+                position = position_dodge(w = 0.35),
+                width = 0.4, size = 1,
+                show.legend = FALSE) +
+  scale_color_manual(values = c("black","#ff0000"), labels = c("lockdown cohort","hybrid cohort"))+
+  scale_shape_manual(values = c(19,17),labels = c("lockdown cohort","hybrid cohort"))+
+  geom_signif(data = data.frame(wave = c(replicate(4,"wave1"),replicate(4,"wave2"),replicate(4,"wave3"))),
+              aes(y_position = both_cohorts_RI_se_cohort_reduced$maximum + 0.025,
+                  xmin = c((1:4)-0.15,(1:4)-0.15,(1:4)-0.15),
+                  xmax = c((1:4)+0.15,(1:4)+0.15,(1:4)+0.15),
+                  group = 1:12,
+                  annotations = both_cohorts_RI_se_cohort_reduced$sig, tip_length = 0.02), size=1,textsize=7,
+              manual = T,inherit.aes = FALSE)+
+  labs(color = "Cohort", shape = "Cohort") +
+  facet_wrap(.~wave, ncol = 3)+
+  theme_bw() +
+  theme(plot.margin = unit(c(1, 1, 4, 3), "lines"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(vjust=0.4, hjust=0.95, angle = 90, size = 20),
+        axis.text.y = element_text(size = 20),
+        #axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.border = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = 'top',
+        legend.text = element_text(size = 24),
+        strip.text = element_text(size = 20),
+        rect = element_rect(fill = "transparent"),
+        panel.background = element_rect(fill = "transparent",
+                                        colour = NA_character_), # necessary to avoid drawing panel outline
+        plot.background = element_rect(fill = "transparent",
+                                       colour = NA_character_), # necessary to avoid drawing plot outline
+        legend.background = element_rect(fill = "transparent"),
+        legend.box.background = element_rect(fill = "transparent",color = "transparent"),
+        legend.key = element_rect(fill = "transparent"))
+
+#as.numeric(t(as.matrix(both_cohorts_RI_se_cohort %>% select(upper.k1,upper.k2))))
+png(filename = "RI_cohort_compare_reduced83.4_new.png", width = 45, height = 25, units = "cm", res = 300)
+
+plot_compare_reduced
+
+dev.off()
+```
+
+
+
+```{r}
+todaysdate <- format(Sys.Date(),"%y%m%d")
+save(list = ls(.GlobalEnv), file = paste0(todaysdate,"_cohort_comparison_environment_",D,"imp.Rdata"))
+```
+
+```{r}
+sessionInfo()
+```

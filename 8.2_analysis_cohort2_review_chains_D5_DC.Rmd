@@ -1,0 +1,305 @@
+---
+title: "8.2_analysis_cohort2"
+author: "Judith Gilsbach"
+date: "2023-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(haven)
+library(tidyverse)
+library(tidygraph)
+library(network)
+library(igraph)
+library(RSiena)
+library(knitr)
+library(tableHTML)
+library(stargazer)
+```
+
+# Load environment from after imputation
+```{r}
+#load imputed data for cohort 2
+D <- 5
+```
+
+# Define helper functions
+
+```{r}
+#Define Function that will hopefully ensure convergence in RSiena (this is from Siena Manual)
+siena07ToConvergence <- function(alg, dat, eff, ans0 = NULL, threshold = 0.25,
+                                 nodes = 1, ...){
+  # parameters are:
+  # alg, dat, eff: Arguments for siena07: algorithm, data, effects object.
+  # ans0: previous answer, if available; used as prevAns in siena07.
+  # threshold: largest satisfactory value
+  #            for overall maximum convergence ratio (indicating convergence).
+  # nodes: number of processes for parallel processing.
+  if (!is.null(ans0)) {
+    alg$nsub = 6
+  }
+  numr <- 0 # number of repetitions
+  ans <- siena07(alg, data = dat, effects = eff, prevAns = ans0,
+                 nbrNodes = nodes, returnDeps = TRUE,
+                 useCluster = (nodes >= 2), ...) # the first run
+  repeat {
+    save(ans, file = paste("ans",numr,".RData",sep = "")) # to be safe
+    numr <- numr + 1         # count number of repeated runs
+    tm <- ans$tconv.max      # convergence indicator
+    cat(numr, tm,"\n")       # report how far we are
+    if (tm < threshold) {break}   # success
+    if (tm > 10) {break}     # divergence without much hope
+    # of returning to good parameter values
+    if (numr > 20) {break}  # now it has lasted too long
+    alg$nsub <- 1
+    alg$n2start <- 2 * (sum(eff$include) + 7) * 2.52**4
+    alg$n3 <- 1000
+    if (numr == 1) {alg$firstg <- alg$firstg/5}
+    ans <- siena07(alg, data = dat, effects = eff, prevAns = ans,
+                   nbrNodes = nodes, returnDeps = TRUE,
+                   useCluster = (nodes >= 2),...)
+  }
+  if (tm > threshold)
+  {
+    stop("Convergence inadequate.\n")
+  }
+  ans
+}
+
+#Since version 1.2-12, Maximum Likelihood (ML) estimation by Rsiena with returnDeps = TRUE returns an edgelist of the final network at the end of the phase 3 simulation.
+#The following function, getNet(), uses this edgelist to impute the data.
+
+getNet <- function(observedNet,edgeList) {
+  # observedNet = observed network as adjacency with missing data
+  # edgeList = edgelist that is returned by siena07(...)$sims
+  observedNet[is.na(observedNet)] <- 0
+  for (i in 1:nrow(edgeList)) {
+    observedNet[edgeList[i,1],edgeList[i,2]] <- 1
+  }
+  return(observedNet)
+}
+
+
+```
+
+# Analysis
+
+## Cohort 2 <br> 2021/22
+```{r}
+#Specify SAOM
+saomResults_K2 <- list()
+
+### move to imp if decided to use ###
+Female_v <- as.vector(Attributes_K2$Female)
+Female2  <- coCovar(as.vector(Female_v),centered=FALSE)
+
+
+eithertut2 <- coDyadCovar(either_tutorial_K2) #either WiW or Statistics tutorial group shared
+  
+  for (i in 1:D) {
+    cat('Imputation',i,'\n')
+    
+    relations_K2 <- sienaDependent(array(c(imp_W1_K2[[i]], imp_W2_K2[[i]],
+                                      imp_W3_K2[[i]]), dim = c( 66, 66, 3)))
+  
+    Data_K2  <- sienaDataCreate(relations_K2, Statistik2, WiW2, both_tutorials2, Female2) #,eithertut2
+    effectsData_K2 <- getEffects(Data_K2)
+    effectsData_K2 <- includeEffects(effectsData_K2,
+                                  recip, density,outActSqrt, inPopSqrt, inActSqrt, outIso)  #
+    effectsData_K2 <- includeEffects(effectsData_K2,  sameX,
+                                  interaction1 =  "Statistik2")
+    effectsData_K2 <- includeEffects(effectsData_K2,  sameX,
+                                  interaction1 =  "WiW2")
+    effectsData_K2 <- includeEffects(effectsData_K2,  sameX,
+                                  interaction1 =  "both_tutorials2")
+    # effectsData_K2 <- includeEffects(effectsData_K2, X, name = "relations_K2",
+    #                                  interaction1 = "eithertut2")
+    effectsData_K2 <- setEffect(effectsData_K2, gwespFF, parameter=138)
+    
+    #Gender
+    effectsData_K2 <- includeEffects(effectsData_K2,  sameX,
+                                  interaction1 =  "Female2")
+    effectsData_K2 <- includeEffects(effectsData_K2,  egoX,
+                                  interaction1 =  "Female2")
+    effectsData_K2 <- includeEffects(effectsData_K2,  altX,
+                                  interaction1 =  "Female2")
+    
+    #effectsData_K2 <- setEffect(effectsData_K2, outTrunc, parameter=5)
+    
+    estimation.options_K2 <- sienaAlgorithmCreate(useStdInits = FALSE, seed = 312,
+                                               n3 = 1000, maxlike = FALSE, cond = FALSE,
+                                               lessMem = FALSE)
+    if (i == 1) {
+      saomResults_K2[[i]] <- siena07ToConvergence(alg = estimation.options_K2,
+                                               dat = Data_K2, eff = effectsData_K2,
+                                               threshold = 0.25, returnChains=TRUE)#,
+                                               #nodes = 2)
+    } else {
+      saomResults_K2[[i]] <- siena07ToConvergence(alg = estimation.options_K2,
+                                               dat = Data_K2, eff = effectsData_K2,
+                                               threshold = 0.25, returnChains=TRUE,
+                                               ans0 = saomResults_K2[[i - 1]])#, 
+                                              # nodes = 2)
+    }
+    save.image('mi_StatSAOM_K2.RData') 
+  }
+
+saomResults_K2[[1]]
+
+```
+
+### look into chains
+
+Check the chains to see the share of null decisions and self-cancelling actions.
+```{r}
+### value meanings
+# chain[[run]][[group]][[period]][[ministep]]
+# theChain[[1]][[1]][[1]][[1]][[4]] # run 1, period 1, step1, ego
+# theChain[[1]][[1]][[1]][[1]][[5]] # run 1, period 1, step1, alter
+# theChain[[1]][[1]][[2]][[1]][[4]] # run 1, period 2, step1, ego
+# theChain[[1]][[1]][[2]][[1]][[5]] # run 1, period 2, step1, alter
+# theChain[[2]][[1]][[1]][[1]][[4]] # run 2, period 1, step1, ego
+# theChain[[2]][[1]][[1]][[1]][[5]] # run 2, period 1, step1, alter
+
+chains_K2_list <- list()
+num <- 1
+
+for (d in 1:D){
+  theChain <- saomResults_K2[[d]]$chain #for each imputation
+
+for (r in 1:length(theChain)){ #for each run
+  for (p in 1:length(theChain[[r]][[1]])){ #for each period (there is only one group)
+    for (m in 1:length(theChain[[r]][[1]][[p]])){ #for each ministep
+      imp <- d
+      run <- r
+      period <- p
+      ministeps.period <- length(theChain[[r]][[1]][[p]])
+      ministep <- m
+      ego <- theChain[[r]][[1]][[p]][[m]][[4]] #4 is ego
+      alter <- theChain[[r]][[1]][[p]][[m]][[5]] #5 is alter
+      chains_K2_list[[num]] <- c(imp,run, period, ministeps.period, ministep, ego, alter)
+      num <- num+1
+    }
+  }
+}
+  
+}
+
+chains_K2_df <-as.data.frame(do.call(rbind, chains_K2_list))
+colnames(chains_K2_df) <- c("imp", "run", "period", "ministeps.period", "ministep", "ego", "alter")
+```
+
+
+```{r}
+chains_K2_dfx <- chains_K2_df %>% 
+  mutate(null_decision = if_else(ego == alter, T,F),
+         one = 1) %>% 
+  group_by(imp, run, period, ego, alter) %>% 
+  mutate(same_tie = cumsum(one)) %>% 
+  ungroup() %>% 
+  select(-one) %>% 
+  mutate(revoked_prev = if_else(ego == alter, NA, if_else(same_tie > 1, TRUE, FALSE))) %>% 
+  group_by(period) %>% 
+  summarise(perc_null_dec = mean(null_decision),
+            perc_revoked = mean(revoked_prev, na.rm = T))
+
+chains_K2_dfx
+```
+```{r}
+#save chain results
+stargazer(chains_K2_dfx, summary = FALSE, title=paste0("Null and self-cancelling mini-steps K2"),
+          rownames = TRUE, type = "html", out = "Results/SAOM_chain_K2.html")
+```
+
+To assess the quality of the model specification collinearity and autocorreltaion are checked and a gof analysis is performed. This can only be done for individual outputs but not for all D iterations at once. Some some will be checked exemplarily. The number in the braces can be changed to which ever iteration you would like to ckeck e.g., [[2]] for the second iteration.
+```{r}
+#colliearity check
+summary(saomResults_K2[[1]]) 
+
+#check for autocorrelation
+saomResults_K2[[1]]$ac
+```
+
+```{r}
+#gof for the last imputation
+saom.results.gof_K2 <- list()
+saom.results.gof_K2[[1]] <- plot(sienaGOF(saomResults_K2[[1]], varName="relations_K2", OutdegreeDistribution))
+saom.results.gof_K2[[2]] <- plot(sienaGOF(saomResults_K2[[1]], varName="relations_K2", IndegreeDistribution))
+saom.results.gof_K2[[1]]
+saom.results.gof_K2[[2]]
+```
+
+The analysis was performed D times, as the network was imputed D times for each wave. Therefore, the analysis results will be pooled by Rubin's rule.
+```{r}
+#The combined estimate for the parameters is the average of the estimates of the D analyses
+rowVar <- function(x) {
+  rowSums((x - rowMeans(x))^2)/(dim(x)[2] - 1)
+}
+
+npar <- sum(effectsData_K2$include) #amount of parameters included
+
+#create a dataframe with all estimated parameters and standard errors
+MIResults_K2 <- as.data.frame(matrix(,npar,(2 * D)))
+
+for (i in 1:D) {
+  names(MIResults_K2)[i * 2 - 1] <- paste("imp" , "mean", sep = as.character(i))
+  names(MIResults_K2)[i * 2] <- paste("imp" , "se", sep = as.character(i))
+  MIResults_K2[,i * 2 - 1] <- saomResults_K2[[i]]$theta
+  MIResults_K2[,i * 2] <-  sqrt(diag(saomResults_K2[[i]]$covtheta))
+}
+
+#Now we get the average covariance structure between the parameters
+
+WDMIs_K2 <- matrix(0,npar,npar)
+
+for (i in 1:D) {
+  WDMIs_K2 <- WDMIs_K2 + saomResults_K2[[i]]$covtheta
+}
+
+WDMIs_K2 <- (1/D) * WDMIs_K2
+
+#Using Rubin’s Rules we combine the parameters and standard errors and complete the procedure
+
+finalResults_K2 <- as.data.frame(matrix(,npar,2))
+names(finalResults_K2) <- c("combinedEstimate", "combinedSE")
+rownames(finalResults_K2) <- effectsData_K2$effectName[effectsData_K2$include]
+finalResults_K2$combinedEstimate <- rowMeans(MIResults_K2[,seq(1,2*D,2)])
+finalResults_K2$combinedSE <- sqrt(diag(WDMIs_K2) + ((D + 1)/D) *
+                                  rowVar(MIResults_K2[,seq(1,2*D,2)]))
+
+#Odds Ratios
+finalResults_K2$OddsRatio <- exp(finalResults_K2$combinedEstimate)
+
+kable(round(finalResults_K2, 3))
+
+finalResults_rounded_K2 <- as.data.frame(round(finalResults_K2, 3))
+
+save.image('mi2.RData')
+
+MIResults_K2 <- MIResults_K2
+
+#significance
+finalResults_rounded_K2$sig <- NA
+finalResults_rounded_K2$sig[(abs(finalResults_rounded_K2$combinedEstimate) - abs(finalResults_rounded_K2$combinedSE)*1.96)>0]<- "*"
+finalResults_rounded_K2$sig[(abs(finalResults_rounded_K2$combinedEstimate) - abs(finalResults_rounded_K2$combinedSE)*2.58)>0]<- "**"
+finalResults_rounded_K2$sig[(abs(finalResults_rounded_K2$combinedEstimate) - abs(finalResults_rounded_K2$combinedSE)*3.29)>0]<- "***"
+
+#save the model results
+stargazer(finalResults_rounded_K2, summary = FALSE, title=paste0("Analysis results cohort 2, 1st wave imputed with stationary SAOM ",D,"imputations"),
+          rownames = TRUE, type = "html", out = "Results/SAOM_analysis_results_K2_chains.html")
+
+```
+
+```{r}
+todaysdate <- format(Sys.Date(),"%y%m%d")
+save(list = ls(.GlobalEnv), file = paste0(todaysdate,"_analysis_cohort2_environment_",D,"imp_chains.Rdata"))
+```
+
+```{r}
+sessionInfo()
+```
